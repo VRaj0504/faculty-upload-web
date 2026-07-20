@@ -1,0 +1,276 @@
+import { useState, useEffect } from 'react';
+import { collection, addDoc, serverTimestamp, query, where, orderBy, onSnapshot, deleteDoc, doc } from 'firebase/firestore';
+import { auth, db } from './firebaseConfig';
+import { supabase } from './supabaseClient';
+import { curriculum } from './curriculum';
+
+const BRANCHES = ['CSE', 'ECE', 'MNC'] as const;
+const SEMESTERS = [1, 2, 3, 4, 5, 6, 7, 8] as const;
+const TYPES = ['Notes', 'PYQ', 'Slides'] as const;
+
+type MyResource = {
+  id: string;
+  title: string;
+  subject: string;
+  branch: string;
+  semester: number;
+  type: string;
+  storagePath: string;
+};
+
+function Upload() {
+  const [file, setFile] = useState<File | null>(null);
+  const [title, setTitle] = useState('');
+  const [branch, setBranch] = useState<typeof BRANCHES[number]>('CSE');
+  const [allBranches, setAllBranches] = useState(false);
+  const [semester, setSemester] = useState<typeof SEMESTERS[number]>(1);
+  const [subject, setSubject] = useState('');
+  const [customSubject, setCustomSubject] = useState('');
+  const [type, setType] = useState<typeof TYPES[number]>('Notes');
+  const [uploading, setUploading] = useState(false);
+  const [message, setMessage] = useState('');
+  const [myResources, setMyResources] = useState<MyResource[]>([]);
+  const [myResourcesError, setMyResourcesError] = useState('');
+
+  // Depends on branch + semester. When "applies to all branches" is checked,
+  // different branches can have different curricula for the same semester,
+  // so there's no single dropdown that's correct for all of them — the
+  // faculty types the subject name directly instead (matched by name, not
+  // code, everywhere else in the app anyway).
+  const subjectOptions = curriculum[branch]?.[semester] ?? [];
+
+  useEffect(() => {
+    if (allBranches) return;
+    if (subjectOptions.length > 0 && !subjectOptions.some((s) => s.name === subject)) {
+      setSubject(subjectOptions[0].name);
+    } else if (subjectOptions.length === 0) {
+      setSubject('');
+    }
+  }, [branch, semester, allBranches]);
+
+  useEffect(() => {
+    if (!auth.currentUser) return;
+
+    const q = query(
+      collection(db, 'resources'),
+      where('uploadedBy', '==', auth.currentUser.uid),
+      orderBy('createdAt', 'desc')
+    );
+
+    const unsubscribe = onSnapshot(
+      q,
+      (snapshot) => {
+        setMyResourcesError('');
+        const items: MyResource[] = snapshot.docs.map((docSnap) => ({
+          id: docSnap.id,
+          ...(docSnap.data() as Omit<MyResource, 'id'>),
+        }));
+        setMyResources(items);
+      },
+      (err) => {
+        // A `where` + `orderBy` on different fields needs a composite
+        // Firestore index. The first time this query runs, Firebase logs a
+        // console error with a direct "create it" link — surfacing that
+        // here instead of failing silently, like it did before.
+        console.error('My Uploads query failed:', err);
+        setMyResourcesError(
+          'Could not load your uploads. Open the browser console (F12) — Firebase usually prints a link there to create a missing index; click it, wait a minute, then reload.'
+        );
+      }
+    );
+
+    return () => unsubscribe();
+  }, []);
+
+  const handleUpload = async () => {
+    const effectiveSubject = allBranches ? customSubject.trim() : subject;
+    if (!file || !title || !effectiveSubject) {
+      setMessage('Please fill in all fields and choose a file.');
+      return;
+    }
+    setUploading(true);
+    setMessage('');
+    try {
+      const fileBytes = await file.arrayBuffer();
+      const targetBranches = allBranches ? BRANCHES : [branch];
+
+      // Upload the actual file once; if it's common to all branches, we
+      // don't need three copies of the same file, just three metadata
+      // records (one per branch) pointing at it — that's how each
+      // branch's Resources screen finds it, since it filters by branch.
+      const storagePath = `${allBranches ? 'ALL' : branch}/${semester}/${effectiveSubject}/${Date.now()}-${file.name}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from('resources')
+        .upload(storagePath, fileBytes, { contentType: file.type });
+      if (uploadError) throw new Error(uploadError.message);
+
+      const { data: urlData } = supabase.storage.from('resources').getPublicUrl(storagePath);
+
+      await Promise.all(
+        targetBranches.map((b) =>
+          addDoc(collection(db, 'resources'), {
+            title,
+            subject: effectiveSubject,
+            branch: b,
+            semester,
+            type,
+            fileUrl: urlData.publicUrl,
+            uploadedBy: auth.currentUser?.uid,
+            storagePath,
+            uploadedByName: auth.currentUser?.email,
+            createdAt: serverTimestamp(),
+          })
+        )
+      );
+
+      setMessage(
+        allBranches
+          ? `Filed successfully for all branches (${BRANCHES.join(', ')}).`
+          : 'Filed successfully.'
+      );
+      setFile(null);
+      setTitle('');
+      setCustomSubject('');
+    } catch (err: any) {
+      setMessage(`Could not file this item: ${err.message}`);
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const handleDelete = async (item: MyResource) => {
+    if (!confirm(`Delete "${item.title}"? This can't be undone.`)) return;
+
+    try {
+      const { error } = await supabase.storage.from('resources').remove([item.storagePath]);
+      if (error) throw new Error(error.message);
+      await deleteDoc(doc(db, 'resources', item.id));
+    } catch (err: any) {
+      alert(`Could not delete: ${err.message}`);
+    }
+  };
+
+  const callNumber = allBranches
+    ? `ALL BRANCHES · SEM ${semester} · ${type.toUpperCase()}`
+    : `${branch} · SEM ${semester} · ${type.toUpperCase()}`;
+
+  return (
+    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '2rem 0' }}>
+      <div className="card" style={{ width: 440, padding: '2.5rem 2.5rem 2rem' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+          <div>
+            <p className="eyebrow">IIIT Surat · Resources Desk</p>
+            <h1 style={{ fontSize: '1.5rem' }}>File a Resource</h1>
+          </div>
+          <button className="button-secondary" onClick={() => auth.signOut()}>Sign out</button>
+        </div>
+
+        <div className="call-number">{callNumber}</div>
+
+        <div style={{ marginTop: '1.6rem' }}>
+          <label>File (PDF or PPT)</label>
+          <input
+            type="file"
+            accept=".pdf,.ppt,.pptx"
+            onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+          />
+        </div>
+
+        <div style={{ marginTop: '1.1rem' }}>
+          <label>Title</label>
+          <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Unit 3 Notes" />
+        </div>
+
+        <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '1.1rem', cursor: 'pointer' }}>
+          <input
+            type="checkbox"
+            checked={allBranches}
+            onChange={(e) => setAllBranches(e.target.checked)}
+            style={{ width: 'auto', flexShrink: 0 }}
+          />
+          <span>This is a common subject — file it for all branches</span>
+        </label>
+
+        {/* Branch + Semester come BEFORE Subject, since Subject depends on both */}
+        <div style={{ display: 'flex', gap: '0.8rem', marginTop: '1.1rem' }}>
+          <div style={{ flex: 1 }}>
+            <label>Branch</label>
+            <select value={branch} onChange={(e) => setBranch(e.target.value as typeof BRANCHES[number])} disabled={allBranches}>
+              {BRANCHES.map((b) => <option key={b} value={b}>{b}</option>)}
+            </select>
+          </div>
+          <div style={{ flex: 1 }}>
+            <label>Semester</label>
+            <select value={semester} onChange={(e) => setSemester(Number(e.target.value) as typeof SEMESTERS[number])}>
+              {SEMESTERS.map((s) => <option key={s} value={s}>Sem {s}</option>)}
+            </select>
+          </div>
+          <div style={{ flex: 1 }}>
+            <label>Type</label>
+            <select value={type} onChange={(e) => setType(e.target.value as typeof TYPES[number])}>
+              {TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+            </select>
+          </div>
+        </div>
+
+        {/* Subject — dropdown from curriculum.ts for a single branch, or
+            free text when filing for all branches at once. */}
+        <div style={{ marginTop: '1.1rem' }}>
+          <label>Subject</label>
+          {allBranches ? (
+            <input
+              value={customSubject}
+              onChange={(e) => setCustomSubject(e.target.value)}
+              placeholder="e.g. Communication Skills and Personality Development"
+            />
+          ) : subjectOptions.length === 0 ? (
+            <p style={{ color: 'var(--ink-soft)', fontSize: '0.85rem' }}>No curriculum data for this branch/semester.</p>
+          ) : (
+            <select value={subject} onChange={(e) => setSubject(e.target.value)}>
+              {subjectOptions.map((s) => <option key={s.code} value={s.name}>{s.name}</option>)}
+            </select>
+          )}
+        </div>
+
+        {message && (
+          <p className={message.startsWith('Could not') ? 'error-text' : 'success-text'} style={{ marginTop: '1rem' }}>
+            {message}
+          </p>
+        )}
+
+        <button onClick={handleUpload} disabled={uploading} style={{ width: '100%', marginTop: '1.4rem' }}>
+          {uploading ? 'Filing…' : 'File Resource'}
+        </button>
+      </div>
+
+      <div className="card" style={{ width: 440, padding: '2rem 2.5rem', marginTop: '1.5rem' }}>
+        <p className="eyebrow">My Uploads</p>
+        {myResourcesError && <p className="error-text">{myResourcesError}</p>}
+        {!myResourcesError && myResources.length === 0 && <p style={{ color: 'var(--ink-soft)' }}>Nothing filed yet.</p>}
+        {myResources.map((item) => (
+          <div
+            key={item.id}
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              padding: '0.7rem 0',
+              borderBottom: '1px solid var(--line)',
+            }}
+          >
+            <div>
+              <div style={{ fontWeight: 500 }}>{item.title}</div>
+              <div className="eyebrow" style={{ fontSize: '0.65rem' }}>
+                {item.branch} · SEM {item.semester} · {item.type}
+              </div>
+            </div>
+            <button className="button-secondary" onClick={() => handleDelete(item)}>Delete</button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+export default Upload;

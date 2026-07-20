@@ -1,0 +1,128 @@
+:root {
+  --ink: #1C2541;
+  --ink-soft: #545F82;
+  --paper: #F1EEE4;
+  --card: #FFFFFF;
+  --line: #DEDACB;
+  --gold: #C99A2E;
+  --danger: #A83E28;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--paper);
+  background-image: radial-gradient(circle at 1px 1px, var(--line) 1px, transparent 0);
+  background-size: 24px 24px;
+  color: var(--ink);
+  font-family: 'Inter', sans-serif;
+}
+
+#root {
+  width: 100%;
+  min-height: 100vh;
+}
+
+.card {
+  position: relative;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  box-shadow: 0 2px 0 var(--line);
+}
+
+.card::before {
+  content: '';
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--paper);
+  border: 1px solid var(--line);
+}
+
+.eyebrow {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.7rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+h1, h2 {
+  font-family: 'Fraunces', serif;
+  font-weight: 600;
+  color: var(--ink);
+  margin: 0.2em 0 0.6em;
+}
+
+label {
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--ink-soft);
+  display: block;
+  margin-bottom: 0.3rem;
+}
+
+input, select {
+  font-family: 'Inter', sans-serif;
+  font-size: 0.95rem;
+  width: 100%;
+  padding: 0.6rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: var(--paper);
+  color: var(--ink);
+}
+
+input:focus, select:focus {
+  outline: 2px solid var(--gold);
+  outline-offset: 1px;
+}
+
+button {
+  font-family: 'Inter', sans-serif;
+  font-weight: 600;
+  font-size: 0.9rem;
+  background: var(--ink);
+  color: var(--paper);
+  border: none;
+  border-radius: 3px;
+  padding: 0.7rem 1.2rem;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+button:hover:not(:disabled) { background: #2A3560; }
+button:disabled { opacity: 0.5; cursor: default; }
+
+.button-secondary {
+  background: transparent;
+  color: var(--ink-soft);
+  border: 1px solid var(--line);
+}
+.button-secondary:hover:not(:disabled) { background: var(--paper); }
+
+.call-number {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.85rem;
+  letter-spacing: 0.08em;
+  color: var(--gold);
+  background: var(--ink);
+  display: inline-block;
+  padding: 0.3rem 0.6rem;
+  border-radius: 3px;
+  margin-top: 0.4rem;
+}
+
+.error-text { color: var(--danger); font-size: 0.85rem; }
+.success-text { color: var(--ink); font-size: 0.85rem; font-weight: 500; }
+
+.button-active {
+  background: var(--gold);
+  color: var(--ink);
+}
+.button-active:hover:not(:disabled) { background: var(--gold); }
