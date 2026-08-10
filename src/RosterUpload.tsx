@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import * as XLSX from 'xlsx';
 import { doc, writeBatch } from 'firebase/firestore';
 import { db } from './firebaseConfig';
 
@@ -51,6 +50,10 @@ function RosterUpload() {
 
   const handleFile = async (file: File) => {
     setStatus('Reading file...');
+    // Loaded on demand rather than imported at the top — xlsx is a large
+    // library (~500KB+ minified), and someone only ever using the
+    // Resources tab shouldn't have to download it at all.
+    const XLSX = await import('xlsx');
     const buffer = await file.arrayBuffer();
     const workbook = XLSX.read(buffer, { type: 'array' });
 
@@ -99,6 +102,18 @@ function RosterUpload() {
 
   const handleUploadToFirestore = async () => {
     if (preview.length === 0) return;
+    // A bulk write like this silently overwrites any existing student
+    // whose reg. no. matches one in the sheet (by design — see the
+    // comment on `doc(db, 'roster', student.regNo)` below), which is a
+    // much bigger, harder-to-undo action than filing one resource. That
+    // deserves at least as much friction as the single-item delete
+    // confirmation elsewhere in this app, not less.
+    if (
+      !confirm(
+        `Upload ${preview.length} students to the roster? Any existing student sharing a reg. no. with one in this sheet will be overwritten with the new row's data.`,
+      )
+    )
+      return;
     setUploading(true);
     setStatus('Uploading...');
 
@@ -129,7 +144,6 @@ function RosterUpload() {
 
   return (
     <div className="card" style={{ width: 560, padding: '2.5rem', margin: '3rem auto' }}>
-      <p className="eyebrow">IIIT Surat · Resources Desk</p>
       <h1 style={{ fontSize: '1.5rem' }}>Upload Student Roster</h1>
 
       <div style={{ marginTop: '1.5rem' }}>
@@ -150,7 +164,7 @@ function RosterUpload() {
         <>
           <div style={{ maxHeight: 240, overflowY: 'auto', marginTop: '1rem', border: '1px solid var(--line)', borderRadius: 4 }}>
             {preview.slice(0, 10).map((row) => (
-              <div key={row.regNo} style={{ padding: '0.4rem 0.7rem', borderBottom: '1px solid var(--line)', fontSize: '0.85rem' }}>
+              <div key={row.regNo} className="list-row" style={{ padding: '0.4rem 0.7rem', borderBottom: '1px solid var(--line)', fontSize: '0.85rem' }}>
                 {row.regNo} — {row.name} — {row.branch} / {row.section} — {row.admissionYear}
               </div>
             ))}

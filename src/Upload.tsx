@@ -7,6 +7,11 @@ import { curriculum } from './curriculum';
 const BRANCHES = ['CSE', 'ECE', 'MNC'] as const;
 const SEMESTERS = [1, 2, 3, 4, 5, 6, 7, 8] as const;
 const TYPES = ['Notes', 'PYQ', 'Slides'] as const;
+// Supabase's free-tier project default is 50MB per file — checking this
+// client-side means a faculty member filing an oversized deck gets a
+// clear message immediately, instead of waiting through however long the
+// upload takes only to hit a cryptic storage-layer error at the end.
+const MAX_FILE_MB = 50;
 
 type MyResource = {
   id: string;
@@ -88,6 +93,12 @@ function Upload() {
       setMessage('Please fill in all fields and choose a file.');
       return;
     }
+    if (file.size > MAX_FILE_MB * 1024 * 1024) {
+      setMessage(
+        `"${file.name}" is ${(file.size / (1024 * 1024)).toFixed(1)}MB — the limit here is ${MAX_FILE_MB}MB. Try compressing it, or splitting it into parts.`,
+      );
+      return;
+    }
     setUploading(true);
     setMessage('');
     try {
@@ -156,15 +167,9 @@ function Upload() {
     : `${branch} · SEM ${semester} · ${type.toUpperCase()}`;
 
   return (
-    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '2rem 0' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '2rem 0' }}>
       <div className="card" style={{ width: 440, padding: '2.5rem 2.5rem 2rem' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-          <div>
-            <p className="eyebrow">IIIT Surat · Resources Desk</p>
-            <h1 style={{ fontSize: '1.5rem' }}>File a Resource</h1>
-          </div>
-          <button className="button-secondary" onClick={() => auth.signOut()}>Sign out</button>
-        </div>
+        <h1 style={{ fontSize: '1.5rem' }}>File a Resource</h1>
 
         <div className="call-number">{callNumber}</div>
 
@@ -251,6 +256,7 @@ function Upload() {
         {myResources.map((item) => (
           <div
             key={item.id}
+            className="list-row"
             style={{
               display: 'flex',
               justifyContent: 'space-between',

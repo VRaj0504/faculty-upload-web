@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import * as XLSX from 'xlsx';
 import { doc, writeBatch } from 'firebase/firestore';
 import { db } from './firebaseConfig';
 
@@ -42,6 +41,7 @@ function CurriculumUpload() {
 
   const handleFile = async (file: File) => {
     setStatus('Reading file...');
+    const XLSX = await import('xlsx');
     const buffer = await file.arrayBuffer();
     const workbook = XLSX.read(buffer, { type: 'array' });
     const sheet = workbook.Sheets[workbook.SheetNames[0]];
@@ -80,6 +80,12 @@ function CurriculumUpload() {
 
   const handleUploadToFirestore = async () => {
     if (preview.length === 0) return;
+    if (
+      !confirm(
+        `Upload ${preview.length} subjects? Any existing subject sharing a branch+semester+code with one in this sheet will be overwritten with the new row's data.`,
+      )
+    )
+      return;
     setUploading(true);
     setStatus('Uploading...');
 
@@ -108,7 +114,6 @@ function CurriculumUpload() {
 
   return (
     <div className="card" style={{ width: 560, padding: '2.5rem', margin: '3rem auto' }}>
-      <p className="eyebrow">IIIT Surat · Resources Desk</p>
       <h1 style={{ fontSize: '1.5rem' }}>Upload Curriculum</h1>
 
       <div style={{ marginTop: '1.5rem' }}>
@@ -129,7 +134,7 @@ function CurriculumUpload() {
         <>
           <div style={{ maxHeight: 240, overflowY: 'auto', marginTop: '1rem', border: '1px solid var(--line)', borderRadius: 4 }}>
             {preview.slice(0, 10).map((row) => (
-              <div key={`${row.branch}_${row.semester}_${row.code}`} style={{ padding: '0.4rem 0.7rem', borderBottom: '1px solid var(--line)', fontSize: '0.85rem' }}>
+              <div key={`${row.branch}_${row.semester}_${row.code}`} className="list-row" style={{ padding: '0.4rem 0.7rem', borderBottom: '1px solid var(--line)', fontSize: '0.85rem' }}>
                 {row.branch} · Sem {row.semester} · {row.code} — {row.name}
               </div>
             ))}

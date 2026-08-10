@@ -3,10 +3,14 @@ import { onAuthStateChanged } from 'firebase/auth';
 import type { User } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
 import { auth, db } from './firebaseConfig';
+import Header from './Header';
 import Login from './Login';
+import SegmentedControl from './SegmentedControl';
 import Upload from './Upload';
 import RosterUpload from './RosterUpload';
+import RosterBrowser from './RosterBrowser';
 import CurriculumUpload from './CurriculumUpload';
+import CurriculumBrowser from './CurriculumBrowser';
 
 function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -16,6 +20,11 @@ function App() {
   // early return — since React requires every hook to run in the same
   // order on every single render, no exceptions.
   const [activeTab, setActiveTab] = useState<'resources' | 'roster' | 'curriculum'>('resources');
+  // Roster and Curriculum each have their own Upload/Browse sub-tab —
+  // bulk-file a whole spreadsheet, or search/fix/remove individual
+  // entries without needing one.
+  const [rosterMode, setRosterMode] = useState<'upload' | 'browse'>('upload');
+  const [curriculumMode, setCurriculumMode] = useState<'upload' | 'browse'>('upload');
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
@@ -35,34 +44,92 @@ function App() {
   }, []);
 
   if (checkingAuth) {
-  return <div className="card" style={{ width: 240, padding: '2rem', margin: '4rem auto', textAlign: 'center' }}><p className="eyebrow" style={{ margin: 0 }}>Loading...</p></div>;
-}
+    return (
+      <>
+        <Header user={null} />
+        <div className="status-shell">
+          <div className="loading-stamp" aria-hidden="true" />
+          <p className="eyebrow" style={{ margin: 0 }}>Loading…</p>
+        </div>
+      </>
+    );
+  }
 
   if (!user) {
     return <Login />;
   }
 
   if (role !== 'faculty') {
-  return (
-    <div className="card" style={{ width: 360, padding: '2.5rem', margin: '4rem auto', textAlign: 'center' }}>
-      <p className="eyebrow">Access denied</p>
-      <p style={{ marginTop: '1rem' }}>This portal is for faculty accounts only.</p>
-      <button onClick={() => auth.signOut()} style={{ marginTop: '1rem' }}>Sign out</button>
-    </div>
-  );
-}
+    return (
+      <>
+        <Header user={user} />
+        <div className="status-shell">
+          <div className="card" style={{ width: 360, maxWidth: '100%', padding: '2.5rem', textAlign: 'center' }}>
+            <p className="eyebrow">Access denied</p>
+            <p style={{ marginTop: '1rem' }}>This portal is for faculty accounts only.</p>
+          </div>
+        </div>
+      </>
+    );
+  }
 
   return (
-    <div>
-      <div style={{ display: 'flex', justifyContent: 'center', gap: '1rem', padding: '1rem 0' }}>
-        <button className={activeTab === 'resources' ? 'button-active' : 'button-secondary'} onClick={() => setActiveTab('resources')}>Resources</button>
-<button className={activeTab === 'roster' ? 'button-active' : 'button-secondary'} onClick={() => setActiveTab('roster')}>Roster</button>
-        <button className={activeTab === 'curriculum' ? 'button-active' : 'button-secondary'} onClick={() => setActiveTab('curriculum')}>Curriculum</button>
+    <>
+      <Header user={user} />
+      <div className="app-body">
+        <div className="tab-bar">
+          <SegmentedControl
+            options={[
+              { value: 'resources', label: 'Resources' },
+              { value: 'roster', label: 'Roster' },
+              { value: 'curriculum', label: 'Curriculum' },
+            ]}
+            value={activeTab}
+            onChange={setActiveTab}
+          />
+        </div>
+
+        {activeTab === 'resources' && (
+          <div className="panel-enter" key="resources">
+            <Upload />
+          </div>
+        )}
+
+        {activeTab === 'roster' && (
+          <div className="panel-enter" key={`roster-${rosterMode}`}>
+            <div className="subtab-bar">
+              <SegmentedControl
+                size="sm"
+                options={[
+                  { value: 'upload', label: 'Bulk Upload' },
+                  { value: 'browse', label: 'Browse & Edit' },
+                ]}
+                value={rosterMode}
+                onChange={setRosterMode}
+              />
+            </div>
+            {rosterMode === 'upload' ? <RosterUpload /> : <RosterBrowser />}
+          </div>
+        )}
+
+        {activeTab === 'curriculum' && (
+          <div className="panel-enter" key={`curriculum-${curriculumMode}`}>
+            <div className="subtab-bar">
+              <SegmentedControl
+                size="sm"
+                options={[
+                  { value: 'upload', label: 'Bulk Upload' },
+                  { value: 'browse', label: 'Browse & Edit' },
+                ]}
+                value={curriculumMode}
+                onChange={setCurriculumMode}
+              />
+            </div>
+            {curriculumMode === 'upload' ? <CurriculumUpload /> : <CurriculumBrowser />}
+          </div>
+        )}
       </div>
-      {activeTab === 'resources' && <Upload />}
-      {activeTab === 'roster' && <RosterUpload />}
-      {activeTab === 'curriculum' && <CurriculumUpload />}
-    </div>
+    </>
   );
 }
 
