@@ -1,16 +1,17 @@
 import { useState, useEffect } from 'react';
 import { collection, addDoc, serverTimestamp, query, where, orderBy, onSnapshot, deleteDoc, doc } from 'firebase/firestore';
-import { auth, db } from './firebaseConfig';
-import { supabase } from './supabaseClient';
+import { ref, uploadBytesResumable, getDownloadURL, deleteObject } from 'firebase/storage';
+import { auth, db, storage } from './firebaseConfig';
 import { curriculum } from './curriculum';
 
 const BRANCHES = ['CSE', 'ECE', 'MNC'] as const;
 const SEMESTERS = [1, 2, 3, 4, 5, 6, 7, 8] as const;
 const TYPES = ['Notes', 'PYQ', 'Slides'] as const;
-// Supabase's free-tier project default is 50MB per file — checking this
-// client-side means a faculty member filing an oversized deck gets a
-// clear message immediately, instead of waiting through however long the
-// upload takes only to hit a cryptic storage-layer error at the end.
+// Keeps a sane cap on file size regardless of what the backend allows —
+// checking this client-side means a faculty member filing an oversized
+// deck gets a clear message immediately, instead of waiting through
+// however long the upload takes only to hit a cryptic storage-layer
+// error at the end.
 const MAX_FILE_MB = 50;
 
 type MyResource = {
@@ -33,6 +34,7 @@ function Upload() {
   const [customSubject, setCustomSubject] = useState('');
   const [type, setType] = useState<typeof TYPES[number]>('Notes');
   const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
   const [message, setMessage] = useState('');
   const [myResources, setMyResources] = useState<MyResource[]>([]);
   const [myResourcesError, setMyResourcesError] = useState('');
@@ -100,23 +102,55 @@ function Upload() {
       return;
     }
     setUploading(true);
+    setUploadProgress(0);
     setMessage('');
     try {
-      const fileBytes = await file.arrayBuffer();
       const targetBranches = allBranches ? BRANCHES : [branch];
 
       // Upload the actual file once; if it's common to all branches, we
       // don't need three copies of the same file, just three metadata
       // records (one per branch) pointing at it — that's how each
       // branch's Resources screen finds it, since it filters by branch.
-      const storagePath = `${allBranches ? 'ALL' : branch}/${semester}/${effectiveSubject}/${Date.now()}-${file.name}`;
+      // Nested under resources/ to match the storage.rules path the
+      // mobile app's uploads also use.
+      const storagePath = `resources/${allBranches ? 'ALL' : branch}/${semester}/${effectiveSubject}/${Date.now()}-${file.name}`;
 
-      const { error: uploadError } = await supabase.storage
-        .from('resources')
-        .upload(storagePath, fileBytes, { contentType: file.type });
-      if (uploadError) throw new Error(uploadError.message);
+      // cacheControl caches this file for a year — safe because
+      // storagePath embeds Date.now(), so a given path's content never
+      // changes. Without this, every student opening a shared PYQ/notes
+      // file re-pulls it from origin storage instead of a cached edge
+      // copy — the fastest way to burn through bandwidth during
+      // exam-week download spikes across a whole college.
+      const fileRef = ref(storage, storagePath);
 
-      const { data: urlData } = supabase.storage.from('resources').getPublicUrl(storagePath);
+      // uploadBytesResumable instead of uploadBytes + a manual
+      // file.arrayBuffer() read: it streams the File directly (no
+      // upfront full-file read blocking the start of the upload),
+      // uploads in chunks with automatic retry on transient network
+      // failures (rather than the whole thing failing outright on one
+      // hiccup), and exposes real progress — all three of which were
+      // missing before and are almost certainly why uploads felt slow
+      // and unreliable on typical college wifi.
+      const fileUrl = await new Promise<string>((resolve, reject) => {
+        const uploadTask = uploadBytesResumable(fileRef, file, {
+          contentType: file.type,
+          cacheControl: 'public,max-age=31536000,immutable',
+        });
+        uploadTask.on(
+          'state_changed',
+          (snapshot) => {
+            setUploadProgress(Math.round((snapshot.bytesTransferred / snapshot.totalBytes) * 100));
+          },
+          (err) => reject(err),
+          async () => {
+            try {
+              resolve(await getDownloadURL(uploadTask.snapshot.ref));
+            } catch (err) {
+              reject(err);
+            }
+          },
+        );
+      });
 
       await Promise.all(
         targetBranches.map((b) =>
@@ -126,7 +160,7 @@ function Upload() {
             branch: b,
             semester,
             type,
-            fileUrl: urlData.publicUrl,
+            fileUrl,
             uploadedBy: auth.currentUser?.uid,
             storagePath,
             uploadedByName: auth.currentUser?.email,
@@ -147,6 +181,7 @@ function Upload() {
       setMessage(`Could not file this item: ${err.message}`);
     } finally {
       setUploading(false);
+      setUploadProgress(0);
     }
   };
 
@@ -154,8 +189,7 @@ function Upload() {
     if (!confirm(`Delete "${item.title}"? This can't be undone.`)) return;
 
     try {
-      const { error } = await supabase.storage.from('resources').remove([item.storagePath]);
-      if (error) throw new Error(error.message);
+      await deleteObject(ref(storage, item.storagePath));
       await deleteDoc(doc(db, 'resources', item.id));
     } catch (err: any) {
       alert(`Could not delete: ${err.message}`);
@@ -245,8 +279,21 @@ function Upload() {
         )}
 
         <button onClick={handleUpload} disabled={uploading} style={{ width: '100%', marginTop: '1.4rem' }}>
-          {uploading ? 'Filing…' : 'File Resource'}
+          {uploading ? `Filing… ${uploadProgress}%` : 'File Resource'}
         </button>
+
+        {uploading && (
+          <div style={{ marginTop: '0.6rem', height: 6, borderRadius: 3, backgroundColor: 'var(--line)', overflow: 'hidden' }}>
+            <div
+              style={{
+                width: `${uploadProgress}%`,
+                height: '100%',
+                backgroundColor: 'var(--accent)',
+                transition: 'width 0.2s ease',
+              }}
+            />
+          </div>
+        )}
       </div>
 
       <div className="card" style={{ width: 440, padding: '2rem 2.5rem', marginTop: '1.5rem' }}>

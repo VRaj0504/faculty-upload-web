@@ -11,6 +11,11 @@ import RosterUpload from './RosterUpload';
 import RosterBrowser from './RosterBrowser';
 import CurriculumUpload from './CurriculumUpload';
 import CurriculumBrowser from './CurriculumBrowser';
+import TimetableEditor from './TimetableEditor';
+import MessSubscribersUpload from './MessSubscribersUpload';
+import AttendanceUpload from './AttendanceUpload';
+import AssignGrades from './AssignGrades';
+import MarkAttendance from './MarkAttendance';
 
 function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -19,12 +24,13 @@ function App() {
   // This MUST be declared here, alongside the other hooks — not after an
   // early return — since React requires every hook to run in the same
   // order on every single render, no exceptions.
-  const [activeTab, setActiveTab] = useState<'resources' | 'roster' | 'curriculum'>('resources');
+  const [activeTab, setActiveTab] = useState<'resources' | 'roster' | 'curriculum' | 'timetable' | 'messSubscribers' | 'attendance' | 'grades'>('resources');
   // Roster and Curriculum each have their own Upload/Browse sub-tab —
   // bulk-file a whole spreadsheet, or search/fix/remove individual
   // entries without needing one.
   const [rosterMode, setRosterMode] = useState<'upload' | 'browse'>('upload');
   const [curriculumMode, setCurriculumMode] = useState<'upload' | 'browse'>('upload');
+  const [attendanceMode, setAttendanceMode] = useState<'mark' | 'excel'>('mark');
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
@@ -83,6 +89,10 @@ function App() {
               { value: 'resources', label: 'Resources' },
               { value: 'roster', label: 'Roster' },
               { value: 'curriculum', label: 'Curriculum' },
+              { value: 'timetable', label: 'Timetable' },
+              { value: 'messSubscribers', label: 'Thali Subscribers' },
+              { value: 'attendance', label: 'Attendance' },
+              { value: 'grades', label: 'Assign Grades' },
             ]}
             value={activeTab}
             onChange={setActiveTab}
@@ -126,6 +136,41 @@ function App() {
               />
             </div>
             {curriculumMode === 'upload' ? <CurriculumUpload /> : <CurriculumBrowser />}
+          </div>
+        )}
+
+        {activeTab === 'timetable' && (
+          <div className="panel-enter" key="timetable">
+            <TimetableEditor />
+          </div>
+        )}
+
+        {activeTab === 'messSubscribers' && (
+          <div className="panel-enter" key="messSubscribers">
+            <MessSubscribersUpload />
+          </div>
+        )}
+
+        {activeTab === 'attendance' && (
+          <div className="panel-enter" key={`attendance-${attendanceMode}`}>
+            <div className="subtab-bar">
+              <SegmentedControl
+                size="sm"
+                options={[
+                  { value: 'mark', label: 'Mark Directly' },
+                  { value: 'excel', label: 'Upload Excel Register' },
+                ]}
+                value={attendanceMode}
+                onChange={setAttendanceMode}
+              />
+            </div>
+            {attendanceMode === 'mark' ? <MarkAttendance /> : <AttendanceUpload />}
+          </div>
+        )}
+
+        {activeTab === 'grades' && (
+          <div className="panel-enter" key="grades">
+            <AssignGrades />
           </div>
         )}
       </div>
