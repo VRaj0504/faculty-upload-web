@@ -1,6 +1,12 @@
-import { useState } from 'react';
-import { doc, writeBatch, serverTimestamp } from 'firebase/firestore';
+import { useState, useEffect, useMemo } from 'react';
+import { collection, doc, getDocs, writeBatch, serverTimestamp } from 'firebase/firestore';
 import { db, auth } from './firebaseConfig';
+
+type RosterEntry = {
+  branch: string;
+  section: string;
+  admissionYear: number;
+};
 
 type StudentRow = {
   enrollmentNumber: string;
@@ -69,11 +75,37 @@ function isMarkedAbsent(value: any): boolean {
 }
 
 function AttendanceUpload() {
+  const [roster, setRoster] = useState<RosterEntry[]>([]);
+  useEffect(() => {
+    getDocs(collection(db, 'roster')).then((snap) => {
+      setRoster(snap.docs.map((d) => d.data() as RosterEntry));
+    });
+  }, []);
+
   const [branch, setBranch] = useState('');
   const [admissionYear, setAdmissionYear] = useState('');
   const [section, setSection] = useState('');
   const [subjectCode, setSubjectCode] = useState('');
   const [subjectName, setSubjectName] = useState('');
+
+  // Real section values that actually exist for this branch+year in the
+  // roster — NOT free-typed. This is the fix for a real bug: a faculty
+  // member typing "CSE B" (a natural guess from how a timetable PDF
+  // labels sections) when the roster's actual convention for the same
+  // students is something entirely different (e.g. "CSE2") meant every
+  // uploaded attendance record silently matched zero real students —
+  // the write succeeded, but no student's app query ever found it.
+  const sectionOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          roster
+            .filter((r) => r.branch === branch.trim().toUpperCase() && String(r.admissionYear) === admissionYear.trim())
+            .map((r) => r.section),
+        ),
+      ).sort(),
+    [roster, branch, admissionYear],
+  );
 
   const [status, setStatus] = useState('');
   const [uploading, setUploading] = useState(false);
@@ -234,7 +266,14 @@ function AttendanceUpload() {
         </div>
         <div style={{ flex: 1 }}>
           <label>Section</label>
-          <input type="text" value={section} onChange={(e) => setSection(e.target.value)} placeholder="e.g. CSE B" />
+          <select value={section} onChange={(e) => setSection(e.target.value)} disabled={!branch.trim() || !admissionYear.trim()}>
+            <option value="">Select...</option>
+            {sectionOptions.map((s) => (
+              <option key={s} value={s}>
+                {s}
+              </option>
+            ))}
+          </select>
         </div>
       </div>
 

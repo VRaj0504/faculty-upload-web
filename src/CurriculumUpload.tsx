@@ -7,6 +7,7 @@ type CurriculumRow = {
   semester: number;
   code: string;
   name: string;
+  credits: number;
 };
 
 const HEADER_ALIASES: Record<keyof CurriculumRow, string[]> = {
@@ -14,6 +15,7 @@ const HEADER_ALIASES: Record<keyof CurriculumRow, string[]> = {
   semester: ['semester', 'sem'],
   code: ['code', 'coursecode', 'coursecodde'],
   name: ['name', 'course', 'coursename', 'subject', 'subjectname'],
+  credits: ['credits', 'credit', 'creditvalue', 'creditsvalue', 'cr'],
 };
 
 function normalizeHeader(h: string): string {
@@ -61,6 +63,7 @@ function CurriculumUpload() {
     }
 
     const parsedRows: CurriculumRow[] = [];
+    let skippedForCredits = 0;
     for (const row of rows.slice(1)) {
       if (!row || row.every((cell) => cell === undefined || cell === '')) continue;
 
@@ -68,14 +71,23 @@ function CurriculumUpload() {
       const semester = Number(row[mapping.semester!]);
       const code = String(row[mapping.code!] ?? '').trim().toUpperCase();
       const name = String(row[mapping.name!] ?? '').trim();
+      const credits = Number(row[mapping.credits!]);
 
       if (!branch || !code || !name || !semester) continue;
+      if (!credits || credits <= 0) {
+        skippedForCredits++;
+        continue;
+      }
 
-      parsedRows.push({ branch, semester, code, name });
+      parsedRows.push({ branch, semester, code, name, credits });
     }
 
     setPreview(parsedRows);
-    setStatus(`Parsed ${parsedRows.length} subjects. Review below, then upload.`);
+    setStatus(
+      skippedForCredits > 0
+        ? `Parsed ${parsedRows.length} subjects. ${skippedForCredits} row(s) were skipped — missing or invalid Credits. Fix those rows in the sheet and re-upload, or they'll stay ungraded. Review below, then upload.`
+        : `Parsed ${parsedRows.length} subjects. Review below, then upload.`,
+    );
   };
 
   const handleUploadToFirestore = async () => {
@@ -117,7 +129,7 @@ function CurriculumUpload() {
       <h1 style={{ fontSize: '1.5rem' }}>Upload Curriculum</h1>
 
       <div style={{ marginTop: '1.5rem' }}>
-        <label>Excel file (.xlsx) — columns: Branch, Semester, Code, Name</label>
+        <label>Excel file (.xlsx) — columns: Branch, Semester, Code, Name, Credits</label>
         <input
           type="file"
           accept=".xlsx,.xls"
@@ -135,7 +147,7 @@ function CurriculumUpload() {
           <div style={{ maxHeight: 240, overflowY: 'auto', marginTop: '1rem', border: '1px solid var(--line)', borderRadius: 4 }}>
             {preview.slice(0, 10).map((row) => (
               <div key={`${row.branch}_${row.semester}_${row.code}`} className="list-row" style={{ padding: '0.4rem 0.7rem', borderBottom: '1px solid var(--line)', fontSize: '0.85rem' }}>
-                {row.branch} · Sem {row.semester} · {row.code} — {row.name}
+                {row.branch} · Sem {row.semester} · {row.code} — {row.name} ({row.credits} cr)
               </div>
             ))}
             {preview.length > 10 && (

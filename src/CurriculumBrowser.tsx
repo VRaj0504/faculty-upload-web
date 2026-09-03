@@ -8,6 +8,7 @@ type CurriculumRow = {
   semester: number;
   code: string;
   name: string;
+  credits: number;
 };
 
 function docIdFor(branch: string, semester: number, code: string) {
@@ -22,17 +23,18 @@ function CurriculumBrowser() {
   const [branchFilter, setBranchFilter] = useState('All');
   const [semesterFilter, setSemesterFilter] = useState('All');
 
-  // Only `name` is editable inline — branch/semester/code together form
-  // this doc's Firestore ID (see docIdFor above), so changing any of them
-  // would mean creating a new doc and deleting the old one, not a normal
-  // field update. If one of those needs correcting, delete the row and
-  // re-add it with the right key instead.
+  // name and credits are editable inline — branch/semester/code together
+  // form this doc's Firestore ID (see docIdFor above), so changing any of
+  // them would mean creating a new doc and deleting the old one, not a
+  // normal field update. If one of those needs correcting, delete the
+  // row and re-add it with the right key instead.
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
+  const [editCredits, setEditCredits] = useState(0);
   const [busyId, setBusyId] = useState<string | null>(null);
 
   const [showAddForm, setShowAddForm] = useState(false);
-  const [addDraft, setAddDraft] = useState({ branch: '', semester: 1, code: '', name: '' });
+  const [addDraft, setAddDraft] = useState({ branch: '', semester: 1, code: '', name: '', credits: 0 });
   const [adding, setAdding] = useState(false);
 
   const loadCurriculum = async () => {
@@ -77,6 +79,7 @@ function CurriculumBrowser() {
   const startEdit = (row: CurriculumRow) => {
     setEditingId(row.id);
     setEditName(row.name);
+    setEditCredits(row.credits ?? 0);
   };
 
   const saveEdit = async (row: CurriculumRow) => {
@@ -84,15 +87,28 @@ function CurriculumBrowser() {
       alert('Name is required.');
       return;
     }
+    if (!editCredits || editCredits <= 0) {
+      alert('Credits must be a positive number — grades can\'t be saved for a subject with no credits.');
+      return;
+    }
     setBusyId(row.id);
     try {
-      await setDoc(doc(db, 'curriculum', row.id), {
-        branch: row.branch,
-        semester: row.semester,
-        code: row.code,
-        name: editName.trim(),
-      });
-      setRows((prev) => prev.map((r) => (r.id === row.id ? { ...r, name: editName.trim() } : r)));
+      // merge: true — a plain setDoc replaces the WHOLE document, which
+      // would silently wipe any field this form doesn't know about.
+      // This bit us for real once already: credits went missing this
+      // exact way before this field existed here at all.
+      await setDoc(
+        doc(db, 'curriculum', row.id),
+        {
+          branch: row.branch,
+          semester: row.semester,
+          code: row.code,
+          name: editName.trim(),
+          credits: editCredits,
+        },
+        { merge: true },
+      );
+      setRows((prev) => prev.map((r) => (r.id === row.id ? { ...r, name: editName.trim(), credits: editCredits } : r)));
       setEditingId(null);
     } catch (err: any) {
       alert(`Could not save: ${err.message}`);
@@ -124,19 +140,23 @@ function CurriculumBrowser() {
       alert('Branch, semester, code, and name are all required.');
       return;
     }
+    if (!addDraft.credits || addDraft.credits <= 0) {
+      alert('Credits must be a positive number — grades can\'t be saved for a subject with no credits.');
+      return;
+    }
     const id = docIdFor(branch, addDraft.semester, code);
     if (rows.some((r) => r.id === id)) {
       if (!confirm(`${branch} Sem ${addDraft.semester} ${code} already exists — overwrite it?`)) return;
     }
     setAdding(true);
     try {
-      await setDoc(doc(db, 'curriculum', id), { branch, semester: addDraft.semester, code, name });
+      await setDoc(doc(db, 'curriculum', id), { branch, semester: addDraft.semester, code, name, credits: addDraft.credits });
       setRows((prev) =>
-        [...prev.filter((r) => r.id !== id), { id, branch, semester: addDraft.semester, code, name }].sort(
+        [...prev.filter((r) => r.id !== id), { id, branch, semester: addDraft.semester, code, name, credits: addDraft.credits }].sort(
           (a, b) => a.branch.localeCompare(b.branch) || a.semester - b.semester || a.code.localeCompare(b.code),
         ),
       );
-      setAddDraft({ branch: '', semester: 1, code: '', name: '' });
+      setAddDraft({ branch: '', semester: 1, code: '', name: '', credits: 0 });
       setShowAddForm(false);
     } catch (err: any) {
       alert(`Could not add: ${err.message}`);
@@ -219,12 +239,21 @@ function CurriculumBrowser() {
                   onChange={(e) => setAddDraft((d) => ({ ...d, code: e.target.value }))}
                 />
               </div>
-              <input
-                style={{ marginTop: '0.6rem' }}
-                placeholder="Subject name"
-                value={addDraft.name}
-                onChange={(e) => setAddDraft((d) => ({ ...d, name: e.target.value }))}
-              />
+              <div style={{ display: 'flex', gap: '0.6rem', marginTop: '0.6rem' }}>
+                <input
+                  style={{ flex: 1 }}
+                  placeholder="Subject name"
+                  value={addDraft.name}
+                  onChange={(e) => setAddDraft((d) => ({ ...d, name: e.target.value }))}
+                />
+                <input
+                  style={{ width: 90 }}
+                  type="number"
+                  placeholder="Credits"
+                  value={addDraft.credits || ''}
+                  onChange={(e) => setAddDraft((d) => ({ ...d, credits: Number(e.target.value) }))}
+                />
+              </div>
               <button type="submit" disabled={adding} style={{ marginTop: '0.8rem' }}>
                 {adding ? 'Adding…' : 'Add subject'}
               </button>
@@ -248,6 +277,12 @@ function CurriculumBrowser() {
                       </div>
                       <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.4rem' }}>
                         <input style={{ flex: 1 }} value={editName} onChange={(e) => setEditName(e.target.value)} />
+                        <input
+                          style={{ width: 80 }}
+                          type="number"
+                          value={editCredits || ''}
+                          onChange={(e) => setEditCredits(Number(e.target.value))}
+                        />
                         <button disabled={busy} onClick={() => saveEdit(row)}>
                           {busy ? 'Saving…' : 'Save'}
                         </button>
@@ -261,7 +296,7 @@ function CurriculumBrowser() {
                       <div>
                         <div style={{ fontWeight: 500 }}>{row.name}</div>
                         <div className="eyebrow" style={{ fontSize: '0.65rem' }}>
-                          {row.branch} · Sem {row.semester} · {row.code}
+                          {row.branch} · Sem {row.semester} · {row.code} · {row.credits ?? '?'} cr
                         </div>
                       </div>
                       <div style={{ display: 'flex', gap: '0.4rem', flexShrink: 0 }}>

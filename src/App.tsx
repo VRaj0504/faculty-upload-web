@@ -15,6 +15,7 @@ import TimetableEditor from './TimetableEditor';
 import MessSubscribersUpload from './MessSubscribersUpload';
 import AttendanceUpload from './AttendanceUpload';
 import AssignGrades from './AssignGrades';
+import ClassCGPA from './ClassCGPA';
 import MarkAttendance from './MarkAttendance';
 
 function App() {
@@ -24,7 +25,7 @@ function App() {
   // This MUST be declared here, alongside the other hooks — not after an
   // early return — since React requires every hook to run in the same
   // order on every single render, no exceptions.
-  const [activeTab, setActiveTab] = useState<'resources' | 'roster' | 'curriculum' | 'timetable' | 'messSubscribers' | 'attendance' | 'grades'>('resources');
+  const [activeTab, setActiveTab] = useState<'resources' | 'roster' | 'curriculum' | 'timetable' | 'messSubscribers' | 'attendance' | 'grades' | 'cgpa'>('resources');
   // Roster and Curriculum each have their own Upload/Browse sub-tab —
   // bulk-file a whole spreadsheet, or search/fix/remove individual
   // entries without needing one.
@@ -93,6 +94,7 @@ function App() {
               { value: 'messSubscribers', label: 'Thali Subscribers' },
               { value: 'attendance', label: 'Attendance' },
               { value: 'grades', label: 'Assign Grades' },
+              { value: 'cgpa', label: 'Class CGPA' },
             ]}
             value={activeTab}
             onChange={setActiveTab}
@@ -171,6 +173,12 @@ function App() {
         {activeTab === 'grades' && (
           <div className="panel-enter" key="grades">
             <AssignGrades />
+          </div>
+        )}
+
+        {activeTab === 'cgpa' && (
+          <div className="panel-enter" key="cgpa">
+            <ClassCGPA />
           </div>
         )}
       </div>
