@@ -100,6 +100,9 @@ function AssignGrades() {
   const subjects = useMemo(() => curriculum.filter((c) => c.branch === branch && String(c.semester) === semester), [curriculum, branch, semester]);
   const selectedSubject = subjects.find((s) => s.code === subjectCode);
 
+  const [pendingWorkbook, setPendingWorkbook] = useState<any>(null);
+  const [pendingSheetNames, setPendingSheetNames] = useState<string[]>([]);
+
   const handleFile = async (file: File) => {
     if (!admissionYear || !branch || !section || !subjectCode) {
       setStatus('Pick Admission Year, Branch, Section, and Subject first.');
@@ -107,10 +110,47 @@ function AssignGrades() {
     }
     setStatus('Reading file...');
     setMarks(null);
-    const XLSX = await import('xlsx');
-    const buffer = await file.arrayBuffer();
-    const workbook = XLSX.read(buffer, { type: 'array' });
-    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+    setPendingWorkbook(null);
+    try {
+      const XLSX = await import('xlsx');
+      const buffer = await file.arrayBuffer();
+      const workbook = XLSX.read(buffer, { type: 'array' });
+
+      if (workbook.SheetNames.length > 1) {
+        // Several marksheets come as one workbook with a separate sheet
+        // per section (e.g. "ECE" / "CSE-1" / "CSE-2") rather than one
+        // flat sheet — silently reading SheetNames[0] regardless of
+        // which Branch/Section was picked above would grade the WRONG
+        // students under the right section, with no error to catch it.
+        // Whoever's uploading knows their own sheet-naming convention;
+        // guessing at it here is exactly the kind of silent mismatch
+        // that shouldn't be automated.
+        setPendingWorkbook(workbook);
+        setPendingSheetNames(workbook.SheetNames);
+        setStatus(`This file has ${workbook.SheetNames.length} sheets — pick which one is ${branch} ${section} below.`);
+        return;
+      }
+
+      parseSheet(XLSX, workbook, workbook.SheetNames[0]);
+    } catch (err: any) {
+      setStatus(`Couldn't read this file: ${err.message ?? 'unknown error'}. Make sure it's a real .xlsx/.xls file, not corrupted or renamed from another format.`);
+    }
+  };
+
+  const handlePickSheet = async (sheetName: string) => {
+    if (!pendingWorkbook) return;
+    try {
+      const XLSX = await import('xlsx');
+      parseSheet(XLSX, pendingWorkbook, sheetName);
+      setPendingWorkbook(null);
+      setPendingSheetNames([]);
+    } catch (err: any) {
+      setStatus(`Couldn't read that sheet: ${err.message ?? 'unknown error'}.`);
+    }
+  };
+
+  function parseSheet(XLSX: any, workbook: any, sheetName: string) {
+    const sheet = workbook.Sheets[sheetName];
     const rows: any[][] = XLSX.utils.sheet_to_json(sheet, { header: 1 });
 
     let headerRowIndex = -1;
@@ -119,9 +159,17 @@ function AssignGrades() {
     let totalCol = -1;
     for (let i = 0; i < Math.min(rows.length, 10); i++) {
       const candidate = rows[i].map((h) => normalizeHeader(String(h ?? '')));
-      const rCol = candidate.findIndex((h) => headerMatchesField(h, HEADER_ALIASES.enrollmentNumber));
-      const nCol = candidate.findIndex((h) => headerMatchesField(h, HEADER_ALIASES.name));
-      const tCol = candidate.findIndex((h) => headerMatchesField(h, HEADER_ALIASES.total));
+      // A row with genuinely blank cells (e.g. spacer columns) comes back
+      // from the xlsx library as a sparse array with real gaps, not
+      // explicit nulls — .map() above silently skips those gaps, but
+      // .findIndex() below does NOT, and hands the gap through as
+      // undefined, which then crashes calling .includes() on it. Filling
+      // every index explicitly closes the gaps so findIndex always sees
+      // a real (possibly empty) string.
+      const filled = Array.from({ length: candidate.length }, (_, idx) => candidate[idx] ?? '');
+      const rCol = filled.findIndex((h) => headerMatchesField(h, HEADER_ALIASES.enrollmentNumber));
+      const nCol = filled.findIndex((h) => headerMatchesField(h, HEADER_ALIASES.name));
+      const tCol = filled.findIndex((h) => headerMatchesField(h, HEADER_ALIASES.total));
       if (rCol !== -1 && nCol !== -1 && tCol !== -1) {
         headerRowIndex = i;
         regNoCol = rCol;
@@ -132,7 +180,7 @@ function AssignGrades() {
     }
 
     if (headerRowIndex === -1) {
-      setStatus('Could not find Reg No / Name / Total columns in the first 10 rows.');
+      setStatus(`Could not find Reg No / Name / Total columns in the first 10 rows of "${sheetName}".`);
       return;
     }
 
@@ -155,14 +203,14 @@ function AssignGrades() {
     }
 
     if (parsed.length === 0) {
-      setStatus('No valid student rows found.');
+      setStatus(`No valid student rows found in "${sheetName}".`);
       return;
     }
 
     setMarks(parsed);
     setAbsentTokens(absent);
-    setStatus(`Parsed ${parsed.length} students (${absent.length} absent/no-score, excluded from statistics below).`);
-  };
+    setStatus(`Parsed ${parsed.length} students from "${sheetName}" (${absent.length} absent/no-score, excluded from statistics below).`);
+  }
 
   const validMarks = useMemo(() => (marks ?? []).filter((m) => m.total !== null).map((m) => m.total as number), [marks]);
   const stats = useMemo(() => {
@@ -318,6 +366,22 @@ function AssignGrades() {
           onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); }}
         />
       </div>
+
+      {pendingSheetNames.length > 0 && (
+        <div style={{ marginTop: '1rem', padding: '1rem', background: 'var(--panel-bg, #f5f5f5)', borderRadius: 6 }}>
+          <label>Which sheet is {branch} {section}?</label>
+          <select defaultValue="" onChange={(e) => e.target.value && handlePickSheet(e.target.value)}>
+            <option value="" disabled>
+              Select the matching sheet...
+            </option>
+            {pendingSheetNames.map((name) => (
+              <option key={name} value={name}>
+                {name}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
 
       {status && <p style={{ marginTop: '1rem', fontSize: '0.9rem' }}>{status}</p>}
 

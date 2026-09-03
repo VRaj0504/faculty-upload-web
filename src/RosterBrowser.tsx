@@ -87,12 +87,21 @@ function RosterBrowser() {
     }
     setBusyRegNo(regNo);
     try {
-      await setDoc(doc(db, 'roster', regNo), {
-        name: editDraft.name.trim(),
-        branch: editDraft.branch.trim().toUpperCase(),
-        section: editDraft.section.trim(),
-        admissionYear: Number(editDraft.admissionYear),
-      });
+      // merge: true — this form only knows about name/branch/section/
+      // admissionYear, but a roster doc can carry other fields too (e.g.
+      // specialization, set by the bulk upload tool). A plain setDoc
+      // replaces the WHOLE document, which would silently wipe any such
+      // field just from editing someone's section here.
+      await setDoc(
+        doc(db, 'roster', regNo),
+        {
+          name: editDraft.name.trim(),
+          branch: editDraft.branch.trim().toUpperCase(),
+          section: editDraft.section.trim(),
+          admissionYear: Number(editDraft.admissionYear),
+        },
+        { merge: true },
+      );
       setRows((prev) =>
         prev.map((r) =>
           r.regNo === regNo
