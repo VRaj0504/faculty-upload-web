@@ -184,3 +184,8 @@ export const curriculum: Record<'CSE' | 'ECE' | 'MNC', BranchCurriculum> = {
     ],
   },
 };
+// A semester's fixed subjects for a branch — what every subject pick-list in
+// the portal offers, so codes and names are chosen, never typed.
+export function subjectsFor(branch: string, semester: number): CurriculumSubject[] {
+  return curriculum[String(branch).toUpperCase() as keyof typeof curriculum]?.[semester] ?? [];
+}

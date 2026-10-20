@@ -1,433 +1,552 @@
-import { useState, useEffect, useMemo } from 'react';
-import { collection, getDocs, doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
-import { db, auth } from './firebaseConfig';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import AttendanceClassPicker, { type PickerState } from './AttendanceClassPicker';
+import {
+  dateWarnings,
+  isValidIso,
+  matchReg,
+  pickBatch,
+  prettyDate,
+  semesterWindow,
+  todayIso,
+  type SessionDoc,
+} from './attendanceCore';
+import { deleteSessions, loadClassSessions, splitByBranch, writeSessions } from './attendanceData';
+import { downloadSemesterRegister } from './AttendanceExport';
 
-type RosterEntry = {
-  regNo: string;
-  name: string;
-  branch: string;
-  section: string;
-  admissionYear: number;
-};
-
-type CurriculumEntry = {
-  branch: string;
-  semester: number;
-  code: string;
-  name: string;
-};
-
-function todayDateString(): string {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-}
-
-function sessionDocId(branch: string, admissionYear: number, section: string, subjectCode: string, date: string): string {
-  return `${branch}_${admissionYear}_${section || 'NONE'}_${subjectCode}_${date}`;
-}
+type Mark = 'P' | 'A' | 'OD';
+type Held = SessionDoc & { id: string };
 
 function MarkAttendance() {
-  const [roster, setRoster] = useState<RosterEntry[]>([]);
-  const [curriculum, setCurriculum] = useState<CurriculumEntry[]>([]);
-  const [dataLoading, setDataLoading] = useState(true);
-  const [dataError, setDataError] = useState('');
+  const [ctx, setCtx] = useState<PickerState | null>(null);
+  const [date, setDate] = useState(todayIso());
+  const [lecture, setLecture] = useState(1);
 
-  const [admissionYear, setAdmissionYear] = useState('');
-  const [branch, setBranch] = useState('');
-  const [section, setSection] = useState('');
-  const [semester, setSemester] = useState('');
-  const [subjectCode, setSubjectCode] = useState('');
-  const [date, setDate] = useState(todayDateString());
+  const [held, setHeld] = useState<Held[] | null>(null); // every session of this subject for the class
+  const [marks, setMarks] = useState<Map<string, Mark>>(new Map());
+  const [dirty, setDirty] = useState(false);
+  const [rollInput, setRollInput] = useState('');
+  const [rollFeedback, setRollFeedback] = useState('');
+  const [busy, setBusy] = useState<'' | 'saving' | 'deleting' | 'downloading'>('');
+  const [status, setStatus] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
+  const [filter, setFilter] = useState('');
 
-  const [loadedRoster, setLoadedRoster] = useState<RosterEntry[] | null>(null);
-  const [loadingClass, setLoadingClass] = useState(false);
-  const [status, setStatus] = useState('');
-  const [absentSet, setAbsentSet] = useState<Set<string>>(new Set());
-  const [saving, setSaving] = useState(false);
+  const classStudents = ctx?.students ?? [];
+  const classKey = ctx ? `${ctx.batch!.key}|${ctx.cls!.key}|${ctx.subject?.code}|${ctx.specialization}|${ctx.semester}` : '';
+
+  // Lecture vs lab/workshop, and which lab batch. Remembered per class +
+  // subject so a weekly lab is one click.
+  const [kind, setKind] = useState<'lecture' | 'lab'>('lecture');
+  const [hours, setHours] = useState(1);
+  const [batchMode, setBatchMode] = useState<string>('all'); // all | h1 | h2 | r:<ranges> | saved
+  const [rangeText, setRangeText] = useState('');
+  const [savedOnly, setSavedOnly] = useState<Set<string> | null>(null);
+  useEffect(() => {
+    if (!ctx?.subject) return;
+    let pref: { kind?: 'lecture' | 'lab'; hours?: number; batch?: string } = {};
+    try {
+      pref = JSON.parse(localStorage.getItem(`att-lab:${classKey}`) ?? '{}');
+    } catch {
+      /* ignore */
+    }
+    const looksLab = /\b(lab|laboratory|workshop|practical)\b/i.test(ctx.subject.name);
+    setKind(pref.kind ?? (looksLab ? 'lab' : 'lecture'));
+    setHours(pref.hours ?? (looksLab ? 2 : 1));
+    setBatchMode(pref.batch ?? 'all');
+    setRangeText(pref.batch?.startsWith('r:') ? pref.batch.slice(2) : '');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [classKey]);
+  const rememberLab = (next: { kind?: 'lecture' | 'lab'; hours?: number; batch?: string }) => {
+    try {
+      const cur = JSON.parse(localStorage.getItem(`att-lab:${classKey}`) ?? '{}');
+      localStorage.setItem(`att-lab:${classKey}`, JSON.stringify({ ...cur, ...next }));
+    } catch {
+      /* ignore */
+    }
+  };
+  // The students this class is for: the whole class, or one lab batch.
+  const students = useMemo(() => {
+    if (batchMode === 'saved' && savedOnly) return classStudents.filter((s) => savedOnly.has(s.regNo));
+    if (batchMode === 'all' || batchMode === 'saved') return classStudents;
+    return pickBatch(classStudents, batchMode);
+  }, [classStudents, batchMode, savedOnly]);
+  const partOfClass = students.length < classStudents.length;
+  const batchName =
+    batchMode === 'h1' ? 'Batch 1 (first half)' : batchMode === 'h2' ? 'Batch 2 (second half)' : batchMode.startsWith('r:') ? `Roll ${batchMode.slice(2)}` : batchMode === 'saved' ? 'Saved batch' : 'Whole class';
+
+  const reloadHeld = useCallback(async () => {
+    if (!ctx?.cls || !ctx.batch || !ctx.subject) return;
+    setHeld(await loadClassSessions(ctx.cls, ctx.batch.year, ctx.subject.code));
+  }, [ctx]);
 
   useEffect(() => {
-    Promise.all([getDocs(collection(db, 'roster')), getDocs(collection(db, 'curriculum'))])
-      .then(([rosterSnap, curriculumSnap]) => {
-        setRoster(rosterSnap.docs.map((d) => ({ regNo: d.id, ...(d.data() as Omit<RosterEntry, 'regNo'>) })));
-        setCurriculum(curriculumSnap.docs.map((d) => d.data() as CurriculumEntry));
-      })
-      .catch((err) => setDataError(`Couldn't load roster/curriculum: ${err.message}`))
-      .finally(() => setDataLoading(false));
-  }, []);
+    setHeld(null);
+    setStatus(null);
+    setFilter('');
+    if (!ctx?.subject) return;
+    reloadHeld().catch((e) => setStatus({ kind: 'error', text: `Couldn’t load past classes: ${e.message}` }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [classKey]);
 
-  const admissionYears = useMemo(
-    () => Array.from(new Set(roster.map((r) => r.admissionYear))).sort((a, b) => b - a),
-    [roster],
-  );
-  const branches = useMemo(
-    () =>
-      Array.from(
-        new Set(roster.filter((r) => String(r.admissionYear) === admissionYear).map((r) => r.branch)),
-      ).sort(),
-    [roster, admissionYear],
-  );
-  const sections = useMemo(
-    () =>
-      Array.from(
-        new Set(
-          roster
-            .filter((r) => String(r.admissionYear) === admissionYear && r.branch === branch)
-            .map((r) => r.section || '(no section)'),
-        ),
-      ).sort(),
-    [roster, admissionYear, branch],
-  );
-  const semesters = useMemo(
-    () => Array.from(new Set(curriculum.filter((c) => c.branch === branch).map((c) => c.semester))).sort((a, b) => a - b),
-    [curriculum, branch],
-  );
-  const subjects = useMemo(
-    () => curriculum.filter((c) => c.branch === branch && String(c.semester) === semester),
-    [curriculum, branch, semester],
+  // The saved record for the chosen date + class of the day, if any (one
+  // doc per branch in the section).
+  const existing = useMemo(
+    () => (held ?? []).filter((h) => h.date === date && (h.lecture ?? 1) === lecture),
+    [held, date, lecture],
   );
 
-  const [rollInput, setRollInput] = useState('');
-  const [rollInputFeedback, setRollInputFeedback] = useState('');
-
-  // Type absentee roll numbers instead of scrolling and clicking — the
-  // fast path for faculty reading off a paper list. Accepts full
-  // enrollment numbers (UG25CSE114) or just the trailing digits (114),
-  // separated by commas/spaces/newlines, since reading out "114, 117,
-  // 132" is how it actually gets written on paper.
-  const applyRollNumbers = () => {
-    if (!loadedRoster) return;
-    const tokens = rollInput
-      .split(/[\s,]+/)
-      .map((t) => t.trim().toUpperCase())
-      .filter(Boolean);
-    if (tokens.length === 0) {
-      setRollInputFeedback('');
-      return;
+  useEffect(() => {
+    const first = existing[0];
+    if (first) {
+      if (first.hours) setHours(first.hours);
+      if (first.kind) setKind(first.kind);
+      else if ((first.hours ?? 1) > 1) setKind('lab');
+      if (first.onlyEnrollmentNumbers?.length) {
+        setSavedOnly(new Set(existing.flatMap((d) => d.onlyEnrollmentNumbers ?? [])));
+        setBatchMode('saved');
+      } else if (batchMode === 'saved') setBatchMode('all');
+    } else {
+      setSavedOnly(null);
+      if (batchMode === 'saved') setBatchMode('all');
     }
-
-    const matched = new Set<string>();
-    const unmatched: string[] = [];
-
-    for (const token of tokens) {
-      // Exact full-enrollment match first, then a trailing-digits match
-      // (so "114" finds UG25CSE114) — but only when that suffix is
-      // unambiguous within this class, since silently picking one of two
-      // possible students would be a genuinely bad failure here.
-      const exact = loadedRoster.find((s) => s.regNo.toUpperCase() === token);
-      if (exact) {
-        matched.add(exact.regNo);
-        continue;
-      }
-      const suffixMatches = loadedRoster.filter((s) => s.regNo.toUpperCase().endsWith(token));
-      if (suffixMatches.length === 1) {
-        matched.add(suffixMatches[0].regNo);
-      } else {
-        unmatched.push(token + (suffixMatches.length > 1 ? ' (ambiguous)' : ''));
-      }
+    const m = new Map<string, Mark>();
+    for (const d of existing) {
+      d.absentEnrollmentNumbers.forEach((r) => m.set(r, 'A'));
+      d.excusedEnrollmentNumbers?.forEach((r) => m.set(r, 'OD'));
     }
+    setMarks(m);
+    setDirty(false);
+    setRollInput(
+      Array.from(m)
+        .filter(([, v]) => v === 'A')
+        .map(([r]) => r)
+        .sort()
+        .join(', '),
+    );
+    setRollFeedback('');
+  }, [existing]);
 
-    setAbsentSet(matched);
-    setRollInputFeedback(
-      unmatched.length > 0
-        ? `Marked ${matched.size} absent. Couldn't match: ${unmatched.join(', ')} — check these and fix, or click them in the list below.`
-        : `Marked ${matched.size} absent.`,
+  // Closing the tab with unsaved marks asks first.
+  useEffect(() => {
+    if (!dirty) return;
+    const h = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', h);
+    return () => window.removeEventListener('beforeunload', h);
+  }, [dirty]);
+
+  // Clicking names keeps the typed-absentees box in step with the list.
+  const absentText = (m: Map<string, Mark>) =>
+    Array.from(m)
+      .filter(([, v]) => v === 'A')
+      .map(([r]) => r)
+      .sort()
+      .join(', ');
+  const setMark = (r: string, v: Mark) => {
+    const next = new Map(marks);
+    if (v === 'P') next.delete(r);
+    else next.set(r, v);
+    setMarks(next);
+    setRollInput(absentText(next));
+    setDirty(true);
+    setRollFeedback('');
+  };
+  const setAll = (v: Mark) => {
+    const next = new Map<string, Mark>();
+    if (v !== 'P') students.forEach((s) => next.set(s.regNo, v));
+    setMarks(next);
+    setRollInput(absentText(next));
+    setDirty(true);
+  };
+
+  const counts = useMemo(() => {
+    let A = 0;
+    let OD = 0;
+    for (const s of students) {
+      const m = marks.get(s.regNo);
+      if (m === 'A') A++;
+      else if (m === 'OD') OD++;
+    }
+    return { A, OD, P: students.length - A - OD };
+  }, [marks, students]);
+
+  // "114, 117" or full numbers → those students absent, everyone else present
+  // (on-duty marks are kept).
+  const applyRolls = () => {
+    if (!ctx) return;
+    const tokens = rollInput.split(/[\s,;]+/).map((t) => t.trim()).filter(Boolean);
+    const next = new Map<string, Mark>(Array.from(marks).filter(([, v]) => v === 'OD'));
+    const problems: string[] = [];
+    for (const t of tokens) {
+      const m = matchReg(t, students, ctx.roster);
+      if (m.kind === 'ok') next.set(m.student.regNo, 'A');
+      else if (m.kind === 'ambiguous') problems.push(`${t} (matches more than one student)`);
+      else if (m.kind === 'elsewhere') problems.push(`${t} (${m.student.name} is in ${m.student.section ?? m.student.branch}, not this class)`);
+      else problems.push(`${t} (not found)`);
+    }
+    setMarks(next);
+    setDirty(true);
+    const absentNow = Array.from(next.values()).filter((v) => v === 'A').length;
+    setRollFeedback(
+      problems.length
+        ? `Marked ${absentNow} absent. Couldn’t use: ${problems.join('; ')}.`
+        : `Marked ${absentNow} absent. Everyone else is present.`,
     );
   };
 
-  const handleLoad = async () => {
-    if (!admissionYear || !branch || !section || !subjectCode || !date) {
-      setStatus('Pick every field above first.');
-      return;
-    }
-    setLoadingClass(true);
-    setStatus('');
+  const dateProblem = !isValidIso(date) ? 'Pick a valid date.' : date > todayIso() ? 'That date is in the future.' : '';
+  const warnings =
+    ctx && !dateProblem
+      ? dateWarnings(date, { holidays: ctx.holidays, window: semesterWindow(ctx.batch!.year, ctx.semester!) })
+      : [];
+  const lecturesThatDay = (held ?? []).filter((h) => h.date === date).map((h) => h.lecture ?? 1);
+
+  // Another lab batch already saved in this slot (no student in common with
+  // the batch being marked now) → save this one as the next free class of
+  // the day instead of overwriting it.
+  const otherBatchInSlot =
+    existing.length > 0 &&
+    existing.some((d) => d.onlyEnrollmentNumbers?.length) &&
+    !students.some((s) => existing.some((d) => d.onlyEnrollmentNumbers?.includes(s.regNo)));
+  const saveLecture = otherBatchInSlot ? Math.max(...lecturesThatDay) + 1 : lecture;
+
+  const save = async () => {
+    if (!ctx?.subject || !ctx.cls || dateProblem || !students.length) return;
+    const lecture = saveLecture;
+    const msg =
+      (otherBatchInSlot ? `Another batch is already saved as class ${existing[0].lecture ?? 1} that day — this batch will be saved as class ${lecture}.\n\n` : '') +
+      `Save ${ctx.subject.code} for ${ctx.cls.label} on ${prettyDate(date)}${lecture > 1 ? ` (class ${lecture} of the day)` : ''}?\n\n` +
+      (kind === 'lab' ? `Lab / workshop · ${hours} hour${hours > 1 ? 's' : ''} (counts as ${hours})${partOfClass ? ` · ${batchName}, ${students.length} students` : ''}\n` : '') +
+      `${counts.P} present · ${counts.A} absent${counts.OD ? ` · ${counts.OD} on duty` : ''}` +
+      (warnings.length ? `\n\nNote: this date is a ${warnings.join(', ')}.` : '') +
+      (existing.length && !otherBatchInSlot ? '\n\nThis replaces the attendance already saved for this class.' : '');
+    if (!confirm(msg)) return;
+    setBusy('saving');
+    setStatus(null);
     try {
-      const sectionValue = section === '(no section)' ? '' : section;
-      const matching = roster
-        .filter(
-          (r) =>
-            String(r.admissionYear) === admissionYear &&
-            r.branch === branch &&
-            (r.section || '') === sectionValue,
-        )
-        .sort((a, b) => a.regNo.localeCompare(b.regNo));
-
-      const id = sessionDocId(branch, Number(admissionYear), sectionValue, subjectCode, date);
-      const existingSnap = await getDoc(doc(db, 'attendanceSessions', id));
-      const existingAbsentees = existingSnap.exists()
-        ? ((existingSnap.data().absentEnrollmentNumbers as string[]) ?? [])
-        : [];
-
-      setLoadedRoster(matching);
-      setAbsentSet(new Set(existingAbsentees));
-      setRollInput(existingAbsentees.slice().sort().join(', '));
-      setRollInputFeedback('');
-      setStatus(
-        existingSnap.exists()
-          ? `Loaded ${matching.length} students — this date was already marked, showing the existing record.`
-          : `Loaded ${matching.length} students. Everyone starts Present — click a name to mark them Absent.`,
+      const absent = students.filter((s) => marks.get(s.regNo) === 'A');
+      const excused = students.filter((s) => marks.get(s.regNo) === 'OD');
+      const docs = splitByBranch(
+        ctx.cls,
+        {
+          admissionYear: ctx.batch!.year,
+          subjectCode: ctx.subject.code,
+          subjectName: ctx.subject.name,
+          date,
+          lecture,
+          semester: ctx.semester!,
+          specialization: ctx.specialization || null,
+          hours: kind === 'lab' ? hours : 1,
+          kind,
+          ...(partOfClass ? { batchLabel: batchName } : {}),
+          source: 'portal',
+        },
+        absent,
+        excused,
+        students,
+        partOfClass,
       );
-    } catch (err: any) {
-      setStatus(`Couldn't load class: ${err.message}`);
+      await writeSessions(docs);
+      // A branch that had a record before but has no students now is cleaned up
+      // (never the other batch's record).
+      const stale = otherBatchInSlot ? [] : existing.map((e) => e.id).filter((id) => !docs.some((d) => d.id === id));
+      if (stale.length) await deleteSessions(stale);
+      if (lecture !== saveLecture || otherBatchInSlot) setLecture(lecture);
+      setDirty(false);
+      setStatus({ kind: 'ok', text: `Saved — ${counts.P} present, ${counts.A} absent${counts.OD ? `, ${counts.OD} on duty` : ''}.` });
+      await reloadHeld();
+    } catch (e: any) {
+      setStatus({ kind: 'error', text: `Couldn’t save: ${e.message}. Your marks are still here — try again.` });
     } finally {
-      setLoadingClass(false);
+      setBusy('');
     }
   };
 
-  const toggleAbsent = (regNo: string) => {
-    setAbsentSet((prev) => {
-      const next = new Set(prev);
-      if (next.has(regNo)) next.delete(regNo);
-      else next.add(regNo);
-      // Keep the text box in sync when someone clicks a name instead of
-      // typing — otherwise the two inputs would silently disagree and
-      // whichever was touched last would win confusingly.
-      setRollInput(Array.from(next).sort().join(', '));
-      setRollInputFeedback('');
-      return next;
-    });
-  };
-
-  const handleSave = async () => {
-    if (!loadedRoster) return;
-    const subject = subjects.find((s) => s.code === subjectCode);
-    if (!subject) return;
-    if (
-      !confirm(
-        `Save attendance for ${subjectCode} on ${date}? ${loadedRoster.length - absentSet.size} present, ${absentSet.size} absent.`,
-      )
-    )
-      return;
-    setSaving(true);
-    setStatus('Saving...');
+  const remove = async () => {
+    if (!existing.length) return;
+    if (!confirm(`Delete the attendance for ${prettyDate(date)}${lecture > 1 ? ` (class ${lecture})` : ''}? Use this when the class didn’t actually happen. It can’t be undone.`)) return;
+    setBusy('deleting');
     try {
-      const sectionValue = section === '(no section)' ? '' : section;
-      const id = sessionDocId(branch, Number(admissionYear), sectionValue, subjectCode, date);
-      await setDoc(doc(db, 'attendanceSessions', id), {
-        branch,
-        admissionYear: Number(admissionYear),
-        section: sectionValue || null,
-        subjectCode,
-        subjectName: subject.name,
-        date,
-        absentEnrollmentNumbers: Array.from(absentSet),
-        markedBy: auth.currentUser?.uid ?? 'web-portal',
-        markedAt: serverTimestamp(),
-      });
-      setStatus(`Saved — ${loadedRoster.length - absentSet.size} present, ${absentSet.size} absent.`);
-    } catch (err: any) {
-      setStatus(`Couldn't save: ${err.message}`);
+      await deleteSessions(existing.map((e) => e.id));
+      setStatus({ kind: 'ok', text: 'Deleted. This class no longer counts in anyone’s percentage.' });
+      await reloadHeld();
+    } catch (e: any) {
+      setStatus({ kind: 'error', text: `Couldn’t delete: ${e.message}` });
     } finally {
-      setSaving(false);
+      setBusy('');
     }
   };
 
-  if (dataLoading) {
-    return (
-      <div className="card" style={{ width: 680, padding: '2.5rem', margin: '3rem auto' }}>
-        <p>Loading roster and curriculum...</p>
-      </div>
-    );
-  }
+  const download = async () => {
+    if (!ctx) return;
+    setBusy('downloading');
+    try {
+      await downloadSemesterRegister(ctx, ctx.subject);
+    } catch (e: any) {
+      setStatus({ kind: 'error', text: `Couldn’t build the download: ${e.message}` });
+    } finally {
+      setBusy('');
+    }
+  };
 
-  if (dataError) {
-    return (
-      <div className="card" style={{ width: 680, padding: '2.5rem', margin: '3rem auto' }}>
-        <p style={{ color: '#b91c1c' }}>{dataError}</p>
-      </div>
-    );
-  }
+  const confirmLeave = () => !dirty || confirm('You have unsaved attendance. Discard it?');
+
+  // Class days recorded so far, newest first.
+  const heldDays = useMemo(() => {
+    const m = new Map<string, { date: string; lecture: number; absent: number }>();
+    for (const h of held ?? []) {
+      const k = `${h.date}#${h.lecture ?? 1}`;
+      const prev = m.get(k);
+      m.set(k, { date: h.date, lecture: h.lecture ?? 1, absent: (prev?.absent ?? 0) + h.absentEnrollmentNumbers.length });
+    }
+    return Array.from(m.values()).sort((a, b) => b.date.localeCompare(a.date) || b.lecture - a.lecture);
+  }, [held]);
+
+  const q = filter.trim().toLowerCase();
+  const shown = q ? students.filter((s) => `${s.regNo} ${s.name}`.toLowerCase().includes(q)) : students;
 
   return (
-    <div className="card" style={{ width: 680, padding: '2.5rem', margin: '3rem auto' }}>
-      <h1 style={{ fontSize: '1.5rem' }}>Mark Attendance</h1>
-      <p style={{ fontSize: '0.85rem', color: 'var(--ink-soft)' }}>
-        Every field below is a dropdown built from real roster/curriculum data — nothing to type,
-        nothing that can be spelled wrong.
+    <div className="card att-card">
+      <h1 style={{ fontSize: '1.5rem' }}>Mark attendance</h1>
+      <p className="res-hint">
+        Everyone starts present — mark only who’s absent. Students see their percentage in the app as soon as you save.
       </p>
 
-      <div style={{ display: 'flex', gap: '1rem', marginTop: '1.5rem' }}>
-        <div style={{ flex: 1 }}>
-          <label>Admission Year</label>
-          <select
-            value={admissionYear}
-            onChange={(e) => {
-              setAdmissionYear(e.target.value);
-              setBranch('');
-              setSection('');
-              setLoadedRoster(null);
-            }}
-          >
-            <option value="">Select...</option>
-            {admissionYears.map((y) => (
-              <option key={y} value={y}>
-                {y}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div style={{ flex: 1 }}>
-          <label>Branch</label>
-          <select
-            value={branch}
-            disabled={!admissionYear}
-            onChange={(e) => {
-              setBranch(e.target.value);
-              setSection('');
-              setSemester('');
-              setSubjectCode('');
-              setLoadedRoster(null);
-            }}
-          >
-            <option value="">Select...</option>
-            {branches.map((b) => (
-              <option key={b} value={b}>
-                {b}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div style={{ flex: 1 }}>
-          <label>Section</label>
-          <select
-            value={section}
-            disabled={!branch}
-            onChange={(e) => {
-              setSection(e.target.value);
-              setLoadedRoster(null);
-            }}
-          >
-            <option value="">Select...</option>
-            {sections.map((s) => (
-              <option key={s} value={s}>
-                {s}
-              </option>
-            ))}
-          </select>
-        </div>
-      </div>
+      <AttendanceClassPicker subjectMode="required" onChange={setCtx} />
 
-      <div style={{ display: 'flex', gap: '1rem', marginTop: '1rem' }}>
-        <div style={{ flex: 1 }}>
-          <label>Semester</label>
-          <select
-            value={semester}
-            disabled={!branch}
-            onChange={(e) => {
-              setSemester(e.target.value);
-              setSubjectCode('');
-              setLoadedRoster(null);
-            }}
-          >
-            <option value="">Select...</option>
-            {semesters.map((s) => (
-              <option key={s} value={s}>
-                {s}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div style={{ flex: 2 }}>
-          <label>Subject</label>
-          <select
-            value={subjectCode}
-            disabled={!semester}
-            onChange={(e) => {
-              setSubjectCode(e.target.value);
-              setLoadedRoster(null);
-            }}
-          >
-            <option value="">Select...</option>
-            {subjects.map((s) => (
-              <option key={s.code} value={s.code}>
-                {s.name}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div style={{ flex: 1 }}>
-          <label>Date</label>
-          <input
-            type="date"
-            value={date}
-            onChange={(e) => {
-              setDate(e.target.value);
-              setLoadedRoster(null);
-            }}
-          />
-        </div>
-      </div>
-
-      <button onClick={handleLoad} disabled={loadingClass} style={{ width: '100%', marginTop: '1rem' }}>
-        {loadingClass ? 'Loading...' : 'Load Class'}
-      </button>
-
-      {status && <p style={{ marginTop: '1rem', fontSize: '0.9rem' }}>{status}</p>}
-
-      {loadedRoster && (
+      {ctx && (
         <>
-          <div style={{ marginTop: '1.5rem', padding: '1rem', border: '1px solid var(--line)', borderRadius: 6 }}>
-            <label style={{ fontWeight: 600 }}>Type absentee roll numbers (fastest)</label>
-            <p style={{ fontSize: '0.8rem', color: 'var(--ink-soft)', margin: '0.25rem 0 0.5rem' }}>
-              Comma or space separated. Full numbers (UG25CSE114) or just the last digits (114) both
-              work. Everyone you don't list stays Present.
+          <div className="att-row">
+            <div className="att-field att-narrow">
+              <label>Date</label>
+              <input
+                type="date"
+                value={date}
+                max={todayIso()}
+                onChange={(e) => {
+                  if (!confirmLeave()) return;
+                  setDate(e.target.value);
+                  setLecture(1);
+                }}
+              />
+            </div>
+            <div className="att-field att-narrow">
+              <label>Which class that day</label>
+              <select
+                value={lecture}
+                onChange={(e) => {
+                  if (!confirmLeave()) return;
+                  setLecture(Number(e.target.value));
+                }}
+              >
+                {[1, 2, 3, 4].map((n) => (
+                  <option key={n} value={n}>
+                    {['1st', '2nd', '3rd', '4th'][n - 1]} class{lecturesThatDay.includes(n) ? ' · saved' : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+          <div className="att-row">
+            <div className="att-field att-narrow">
+              <label>Class type</label>
+              <select
+                value={kind === 'lab' ? `lab${hours}` : 'lecture'}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  const k = v === 'lecture' ? 'lecture' : 'lab';
+                  const h = v === 'lecture' ? 1 : Number(v.slice(3));
+                  setKind(k);
+                  setHours(h);
+                  setDirty(true);
+                  rememberLab({ kind: k, hours: h });
+                }}
+              >
+                <option value="lecture">Lecture (1 hour)</option>
+                <option value="lab2">Lab / workshop — 2 hours</option>
+                <option value="lab3">Lab / workshop — 3 hours</option>
+                <option value="lab1">Lab / tutorial — 1 hour</option>
+              </select>
+            </div>
+            <div className="att-field">
+              <label>Who attends</label>
+              <select
+                value={batchMode.startsWith('r:') ? 'r' : batchMode}
+                onChange={(e) => {
+                  const v = e.target.value === 'r' ? `r:${rangeText}` : e.target.value;
+                  setBatchMode(v);
+                  setDirty(true);
+                  if (v !== 'saved') rememberLab({ batch: v });
+                }}
+              >
+                <option value="all">Whole class ({classStudents.length})</option>
+                <option value="h1">Batch 1 — first half ({Math.ceil(classStudents.length / 2)})</option>
+                <option value="h2">Batch 2 — second half ({Math.floor(classStudents.length / 2)})</option>
+                <option value="r">Roll numbers… (custom batch)</option>
+                {savedOnly && <option value="saved">As saved ({savedOnly.size} students)</option>}
+              </select>
+            </div>
+          </div>
+          {batchMode.startsWith('r:') && (
+            <div className="att-row">
+              <input
+                style={{ flex: 1 }}
+                placeholder="e.g. 1-35  or  101-140, 145  (last digits of the reg. no.)"
+                value={rangeText}
+                onChange={(e) => {
+                  setRangeText(e.target.value);
+                  setBatchMode(`r:${e.target.value}`);
+                  rememberLab({ batch: `r:${e.target.value}` });
+                }}
+              />
+            </div>
+          )}
+          <p className="res-hint">
+            {kind === 'lab'
+              ? `A ${hours}-hour lab counts as ${hours} classes in the percentage (hours attended ÷ hours held).`
+              : 'Two lectures of this subject on one day? Save the second as “2nd class”.'}{' '}
+            {partOfClass
+              ? `Only these ${students.length} students are counted for this class — the rest of the class isn’t marked absent.`
+              : kind === 'lab'
+                ? 'Lab split into batches? Pick the batch above so the other half isn’t marked absent.'
+                : ''}
+          </p>
+
+          {dateProblem && <p className="notice notice-error">{dateProblem}</p>}
+          {!dateProblem && warnings.length > 0 && (
+            <p className="notice att-warn">
+              Heads up: {prettyDate(date)} is a {warnings.join(', ')}. You can still save if the class happened.
             </p>
-            <textarea
-              value={rollInput}
-              onChange={(e) => setRollInput(e.target.value)}
-              placeholder="e.g. 114, 117, 132"
-              rows={2}
-              style={{ width: '100%', fontFamily: 'inherit', fontSize: '0.9rem', padding: '0.5rem' }}
-            />
-            <button onClick={applyRollNumbers} style={{ width: '100%', marginTop: '0.5rem' }}>
-              Apply to List
-            </button>
-            {rollInputFeedback && (
-              <p style={{ fontSize: '0.8rem', marginTop: '0.5rem', marginBottom: 0 }}>{rollInputFeedback}</p>
-            )}
-          </div>
+          )}
+          {!dateProblem && existing.length > 0 && !otherBatchInSlot && (
+            <p className="notice notice-ok">
+              Already saved{existing[0].markedByName ? ` by ${existing[0].markedByName}` : ''} — you’re editing that record.
+            </p>
+          )}
+          {!dateProblem && otherBatchInSlot && (
+            <p className="notice att-warn">
+              {existing[0].batchLabel ?? 'Another batch'} is already saved in this slot. This batch will be saved as class {saveLecture} of
+              the day, so neither overwrites the other.
+            </p>
+          )}
+          {students.length === 0 && (
+            <p className="notice notice-error">No students in this class{ctx.specialization ? ` for ${ctx.specialization}` : ''}.</p>
+          )}
+          {held === null && !status && <p className="res-hint">Loading…</p>}
 
-          <div style={{ maxHeight: 400, overflowY: 'auto', marginTop: '1rem', border: '1px solid var(--line)', borderRadius: 4 }}>
-            {loadedRoster.map((student) => {
-              const isAbsent = absentSet.has(student.regNo);
-              return (
-                <div
-                  key={student.regNo}
-                  onClick={() => toggleAbsent(student.regNo)}
-                  style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    padding: '0.6rem 0.9rem',
-                    borderBottom: '1px solid var(--line)',
-                    cursor: 'pointer',
-                    background: isAbsent ? 'rgba(220, 38, 38, 0.08)' : undefined,
-                  }}
-                >
-                  <div>
-                    <div style={{ fontSize: '0.9rem', fontWeight: 600 }}>{student.name}</div>
-                    <div style={{ fontSize: '0.75rem', color: 'var(--ink-soft)' }}>{student.regNo}</div>
-                  </div>
-                  <span
-                    style={{
-                      fontSize: '0.75rem',
-                      fontWeight: 700,
-                      color: '#fff',
-                      background: isAbsent ? '#dc2626' : '#16a34a',
-                      padding: '0.25rem 0.6rem',
-                      borderRadius: 999,
-                    }}
-                  >
-                    {isAbsent ? 'Absent' : 'Present'}
-                  </span>
+          {!dateProblem && students.length > 0 && held !== null && (
+            <>
+              <div className="att-rolls">
+                <label>Type absentees (fastest)</label>
+                <div className="att-row" style={{ marginTop: 0 }}>
+                  <textarea
+                    value={rollInput}
+                    onChange={(e) => setRollInput(e.target.value)}
+                    placeholder="e.g. 114, 117, 132 — full numbers or last digits"
+                    rows={2}
+                    style={{ flex: 1 }}
+                  />
+                  <button type="button" onClick={applyRolls}>Apply</button>
                 </div>
-              );
-            })}
-          </div>
+                {rollFeedback && <p className="res-hint">{rollFeedback}</p>}
+              </div>
 
-          <button onClick={handleSave} disabled={saving} style={{ width: '100%', marginTop: '1rem' }}>
-            {saving ? 'Saving...' : `Save — ${loadedRoster.length - absentSet.size} Present, ${absentSet.size} Absent`}
-          </button>
+              <div className="att-toolbar">
+                <span className="att-count att-p">{counts.P} present</span>
+                <span className="att-count att-a">{counts.A} absent</span>
+                {counts.OD > 0 && <span className="att-count att-od">{counts.OD} on duty</span>}
+                <span style={{ flex: 1 }} />
+                <input className="att-search" placeholder="Find a student…" value={filter} onChange={(e) => setFilter(e.target.value)} />
+                <button type="button" className="button-secondary" onClick={() => setAll('P')}>All present</button>
+                <button type="button" className="button-secondary" onClick={() => setAll('A')}>All absent</button>
+              </div>
+
+              <div className="att-list">
+                {shown.map((s, i) => {
+                  const m = marks.get(s.regNo) ?? 'P';
+                  return (
+                    <div key={s.regNo} className={`att-student att-is-${m}`}>
+                      <span className="att-idx">{i + 1}</span>
+                      <button type="button" className="att-name" onClick={() => setMark(s.regNo, m === 'A' ? 'P' : 'A')}>
+                        <strong>{s.name}</strong>
+                        <small>
+                          {s.regNo}
+                          {ctx.cls!.targets.length > 1 ? ` · ${s.branch}` : ''}
+                        </small>
+                      </button>
+                      <div className="att-seg" role="radiogroup" aria-label={`${s.name} attendance`}>
+                        {(['P', 'A', 'OD'] as Mark[]).map((v) => (
+                          <button
+                            key={v}
+                            type="button"
+                            role="radio"
+                            aria-checked={m === v}
+                            className={m === v ? 'on' : ''}
+                            title={v === 'P' ? 'Present' : v === 'A' ? 'Absent' : 'On duty / leave — counts as attended'}
+                            onClick={() => setMark(s.regNo, v)}
+                          >
+                            {v}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+                {!shown.length && <p className="res-hint" style={{ padding: '0.8rem' }}>No student matches “{filter}”.</p>}
+              </div>
+
+              <div className="att-actions">
+                <button type="button" onClick={save} disabled={!!busy} style={{ flex: 1 }}>
+                  {busy === 'saving' ? 'Saving…' : `${existing.length ? 'Update' : 'Save'} — ${counts.P} present, ${counts.A} absent`}
+                </button>
+                {existing.length > 0 && (
+                  <button type="button" className="button-secondary att-danger" onClick={remove} disabled={!!busy}>
+                    {busy === 'deleting' ? 'Deleting…' : 'Delete this class'}
+                  </button>
+                )}
+              </div>
+              {dirty && <p className="res-hint">Unsaved changes.</p>}
+            </>
+          )}
+
+          {status && <p className={`notice ${status.kind === 'ok' ? 'notice-ok' : 'notice-error'}`}>{status.text}</p>}
+
+          {held !== null && (
+            <div className="att-held">
+              <div className="att-row" style={{ alignItems: 'center' }}>
+                <h3 style={{ margin: 0, flex: 1, fontSize: '1rem' }}>
+                  {heldDays.length} class{heldDays.length === 1 ? '' : 'es'} of {ctx.subject!.code} recorded
+                </h3>
+                <button type="button" className="button-secondary" onClick={download} disabled={!!busy || !heldDays.length}>
+                  {busy === 'downloading' ? 'Preparing…' : 'Download register (.xlsx)'}
+                </button>
+              </div>
+              {heldDays.length > 0 ? (
+                <div className="att-chips">
+                  {heldDays.map((h) => (
+                    <button
+                      key={`${h.date}#${h.lecture}`}
+                      type="button"
+                      className={`att-chip ${h.date === date && h.lecture === lecture ? 'on' : ''}`}
+                      onClick={() => {
+                        if (!confirmLeave()) return;
+                        setDate(h.date);
+                        setLecture(h.lecture);
+                      }}
+                      title="Open to edit"
+                    >
+                      {prettyDate(h.date)}
+                      {h.lecture > 1 ? ` · ${h.lecture}` : ''}
+                      <small>{h.absent} absent</small>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <p className="res-hint">Nothing recorded yet for this subject.</p>
+              )}
+            </div>
+          )}
         </>
       )}
     </div>

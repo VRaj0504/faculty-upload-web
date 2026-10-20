@@ -1,14 +1,32 @@
-import * as XLSX from 'xlsx';
-import * as pdfjsLib from 'pdfjs-dist';
+// xlsx and pdfjs-dist are both large (400KB+ each) and are only ever
+// needed once a faculty member actually imports a spreadsheet or PDF —
+// never just to open the Timetable tab and look at what's already
+// there. Loading them via dynamic import() inside the functions that
+// use them (instead of a static top-level import) keeps them out of
+// this module's own chunk entirely, matching the pattern every other
+// upload screen in the app already uses for xlsx. Each loader below is
+// only ever actually fetched once per session — the browser/module
+// cache makes every call after the first resolve instantly.
+async function getXLSX() {
+  return await import('xlsx');
+}
 
-// pdf.js needs its worker script available at runtime. The npm package
-// ships it pre-built; importing it as a URL and pointing workerSrc at
-// that URL is the standard Vite-friendly way to wire this up without a
-// separate manual copy-to-public-folder build step.
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-ignore -- Vite's ?url suffix has no type declaration, but is real.
-import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url';
-pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
+let pdfWorkerConfigured = false;
+export async function getPdfjs() {
+  const pdfjsLib = await import('pdfjs-dist');
+  if (!pdfWorkerConfigured) {
+    // pdf.js needs its worker script available at runtime. The npm
+    // package ships it pre-built; importing it as a URL and pointing
+    // workerSrc at that URL is the standard Vite-friendly way to wire
+    // this up without a separate manual copy-to-public-folder step.
+    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+    // @ts-ignore -- Vite's ?url suffix has no type declaration, but is real.
+    const { default: pdfWorkerUrl } = await import('pdfjs-dist/build/pdf.worker.mjs?url');
+    pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
+    pdfWorkerConfigured = true;
+  }
+  return pdfjsLib;
+}
 
 export type TimetableSlot = {
   id: string;
@@ -67,9 +85,25 @@ function normalizeTimeCell(raw: string | number): string {
     const isPM = /pm/i.test(match[3]);
     if (isPM && h !== 12) h += 12;
     if (!isPM && h === 12) h = 0;
+  } else if (h >= 1 && h <= 7) {
+    // No AM/PM ("2:00"): classes never run 1–7 AM, so it's 14:00.
+    h += 12;
   }
   return `${h}:${m}`;
 }
+
+// Downloadable starting point for the whole-college upload below --
+// real rows from an already-verified section (ECE Sem1 Section A),
+// not placeholder text, so pasting more rows in the same shape is
+// obvious. Deliberately only a few rows, not a whole section, so it
+// stays a template to build from rather than something to publish
+// as-is by accident.
+export const WHOLE_COLLEGE_TIMETABLE_TEMPLATE_CSV =
+  'Branch,Semester,Section,Day,Start Time,End Time,Subject Code,Subject Name,Faculty,Room,Group\n' +
+  'ECE,1,A,Monday,09:00,10:00,AS101,,ND,PHY Lab 1,Group 1\n' +
+  'ECE,1,A,Monday,09:00,10:00,EC101,,RDM/SRS,ECE Lab 2,Group 2\n' +
+  'ECE,1,A,Monday,11:00,12:00,AS102,,PAS F1,CR 6,\n' +
+  'ECE,1,A,Tuesday,09:00,10:00,MS101,,APS,CR 6,\n';
 
 // Header synonyms this accepts, matched case-insensitively against the
 // sheet's first row. Add more synonyms here if a real department sheet
@@ -113,6 +147,7 @@ export type SpreadsheetParseResult = {
 // a Day column plus Start/End time columns; every other column is
 // optional and left blank if the sheet doesn't have it.
 export async function parseSpreadsheetFile(file: File): Promise<SpreadsheetParseResult> {
+  const XLSX = await getXLSX();
   const buffer = await file.arrayBuffer();
   const workbook = XLSX.read(buffer, { type: 'array', cellDates: false });
   const firstSheetName = workbook.SheetNames[0];
@@ -178,6 +213,7 @@ export async function parseSpreadsheetFile(file: File): Promise<SpreadsheetParse
 // multi-page "whole college" PDF (one page per section), see
 // renderAllPdfPagesToJpegBlobs below instead.
 export async function renderPdfFirstPageToJpegBlob(file: File): Promise<Blob> {
+  const pdfjsLib = await getPdfjs();
   const buffer = await file.arrayBuffer();
   const pdf = await pdfjsLib.getDocument({ data: buffer }).promise;
   const page = await pdf.getPage(1);
@@ -210,6 +246,7 @@ export async function renderPdfFirstPageToJpegBlob(file: File): Promise<Blob> {
 // parameter to it, since the two call sites (single scan import vs. bulk
 // import) have different UI flows around them.
 export async function renderAllPdfPagesToJpegBlobs(file: File): Promise<Blob[]> {
+  const pdfjsLib = await getPdfjs();
   const buffer = await file.arrayBuffer();
   const pdf = await pdfjsLib.getDocument({ data: buffer }).promise;
   const blobs: Blob[] = [];
@@ -283,6 +320,7 @@ const SECTION_HEADER_SYNONYMS = {
 // software can export one big sheet like this instead of a PDF, use
 // this over the PDF batch import every time.
 export async function parseSpreadsheetAllSections(file: File): Promise<MultiSectionParseResult> {
+  const XLSX = await getXLSX();
   const buffer = await file.arrayBuffer();
   const workbook = XLSX.read(buffer, { type: 'array', cellDates: false });
   const firstSheetName = workbook.SheetNames[0];
@@ -394,6 +432,23 @@ function to24Hour(hour12: number, meridiem: string): number {
 // range moving forward in time by a plausible single-class-slot gap
 // (0–4 hours) — true for every real class slot, never true for the
 // wrong meridiem on a well-formed range.
+// A grid cell's lines after the subject code are Room then Faculty,
+// in that order, on their own lines -- this function's job, and the
+// template built from it, teaches that convention rather than
+// guessing at it. With exactly that shape (2+ lines), the LAST line
+// is faculty and everything before it is the room, joined back
+// together (a room name can itself span two lines). With only ONE
+// line, there's no reliable way to tell where a room name ends and a
+// name begins without guessing -- exactly the kind of guess that
+// caused the CR1/CR2 room-splitting bug this fixes, so it's kept
+// whole as the room and faculty is left blank rather than split
+// blindly.
+function splitRoomAndFaculty(lines: string[]): { room: string; faculty: string } {
+  if (lines.length === 0) return { room: '', faculty: '' };
+  if (lines.length === 1) return { room: lines[0], faculty: '' };
+  return { room: lines.slice(0, -1).join(' '), faculty: lines[lines.length - 1] };
+}
+
 function parseHeaderTimeRange(text: string): { startTime: string; endTime: string } | null {
   const match = text.match(
     /(\d{1,2}):?(\d{0,2})\s*(AM|PM)?\s*[-–—]?\s*(\d{1,2}):?(\d{0,2})\s*(AM|PM)?/i,
@@ -425,11 +480,11 @@ function parseHeaderTimeRange(text: string): { startTime: string; endTime: strin
     endHour = diffAM > 0 && diffAM <= 4 ? tryAM : tryPM;
     startHour = startHour0;
   } else {
-    // Neither side has an explicit meridiem at all — nothing to
-    // disambiguate with, so take the digits as given (correct for a
-    // sheet where every column is naturally AM already).
-    startHour = h1;
-    endHour = h2;
+    // Neither side has an explicit meridiem. Classes never run 1–7 AM,
+    // so a "2:00-3:00" header is the afternoon (it used to be stored as
+    // 2 AM, which made the student app show those rooms as empty).
+    startHour = h1 >= 1 && h1 <= 7 ? h1 + 12 : h1;
+    endHour = h2 >= 1 && h2 <= 7 ? h2 + 12 : h2;
   }
 
   return {
@@ -448,6 +503,7 @@ export function looksLikeGridWorkbook(workbook: any): boolean {
 }
 
 export async function parseGridWorkbookAllSections(workbook: any): Promise<MultiSectionParseResult> {
+  const XLSX = await getXLSX();
   const groups: MultiSectionGroup[] = [];
   let skippedRowCount = 0;
 
@@ -491,26 +547,42 @@ export async function parseGridWorkbookAllSections(workbook: any): Promise<Multi
         const cellText = String(cellRaw).trim();
         if (!cellText) continue;
 
-        const lines = cellText.split('\n').map((l) => l.trim()).filter(Boolean);
-        let group: string | undefined;
-        let contentLines = lines;
-        if (lines[0] && /^group\s*\d+$/i.test(lines[0])) {
-          group = lines[0];
-          contentLines = lines.slice(1);
-        }
-        if (contentLines.length === 0) continue;
+        // A cell holds either one class, or two stacked ones sharing the
+        // same hour (a lab split into Group 1 / Group 2) — separated by a
+        // blank line in the source. That blank line has to be the FIRST
+        // thing split on, before any per-line trimming/filtering — doing
+        // it the other way around (stripping all blank lines up front)
+        // erases the one signal that tells Group 1 apart from Group 2,
+        // and silently merges Group 2's entire subject/room text into
+        // Group 1's room field as garbage, with no slot of its own at
+        // all. That's the exact bug that left Group 2 students with no
+        // real class data and the wrong (or no) reminder.
+        const segments = cellText.split(/\n\s*\n/).map((seg) => seg.trim()).filter(Boolean);
 
-        const dayEntry = days.find((d) => d.day === currentDay)!;
-        dayEntry.slots.push({
-          id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-          startTime: tc.startTime,
-          endTime: tc.endTime,
-          subjectCode: contentLines[0],
-          subjectName: '',
-          faculty: '',
-          room: contentLines.slice(1).join(' '),
-          ...(group ? { group } : {}),
-        });
+        for (const segment of segments) {
+          const lines = segment.split('\n').map((l) => l.trim()).filter(Boolean);
+          let group: string | undefined;
+          let contentLines = lines;
+          if (lines[0] && /^group\s*\d+$/i.test(lines[0])) {
+            group = lines[0];
+            contentLines = lines.slice(1);
+          }
+          if (contentLines.length === 0) continue;
+
+          const dayEntry = days.find((d) => d.day === currentDay)!;
+          const { room, faculty } = splitRoomAndFaculty(contentLines.slice(1));
+
+          dayEntry.slots.push({
+            id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            startTime: tc.startTime,
+            endTime: tc.endTime,
+            subjectCode: contentLines[0],
+            subjectName: '',
+            faculty,
+            room,
+            ...(group ? { group } : {}),
+          });
+        }
       }
     }
 
@@ -527,6 +599,7 @@ export async function parseGridWorkbookAllSections(workbook: any): Promise<Multi
 // whichever one actually matches. The uploader shouldn't need to know
 // in advance which shape their own spreadsheet is.
 export async function parseAnySpreadsheetAllSections(file: File): Promise<MultiSectionParseResult> {
+  const XLSX = await getXLSX();
   const buffer = await file.arrayBuffer();
   const workbook = XLSX.read(buffer, { type: 'array', cellDates: false });
   if (looksLikeGridWorkbook(workbook)) {

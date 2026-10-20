@@ -44,7 +44,11 @@ function ClassCGPA() {
 
   useEffect(() => {
     getDocs(collection(db, 'roster')).then((snap) => {
-      setRoster(snap.docs.map((d) => ({ regNo: d.id, ...(d.data() as Omit<RosterEntry, 'regNo'>) })));
+      setRoster(
+        snap.docs
+          .filter((d) => d.data().reviewer !== true) // app-store reviewer account
+          .map((d) => ({ regNo: d.id, ...(d.data() as Omit<RosterEntry, 'regNo'>) })),
+      );
       setDataLoading(false);
     });
   }, []);

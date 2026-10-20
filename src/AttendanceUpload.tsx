@@ -1,333 +1,466 @@
-import { useState, useEffect, useMemo } from 'react';
-import { collection, doc, getDocs, writeBatch, serverTimestamp } from 'firebase/firestore';
-import { db, auth } from './firebaseConfig';
+import { useEffect, useMemo, useState } from 'react';
+import AttendanceClassPicker, { type PickerState } from './AttendanceClassPicker';
+import {
+  dateWarnings,
+  gridFromPdfPages,
+  guessBlankMeaning,
+  parseRegister,
+  planRegister,
+  prettyDate,
+  semesterWindow,
+  sessionDocId,
+  todayIso,
+  type ParsedRegister,
+} from './attendanceCore';
+import { existingIds, splitByBranch, writeSessions } from './attendanceData';
+import { downloadXlsx } from './xlsxTemplates';
 
-type RosterEntry = {
-  branch: string;
-  section: string;
-  admissionYear: number;
-};
+type Opts = { blank: 'present' | 'absent'; unknown: 'present' | 'absent'; missing: 'present' | 'absent' | 'skip' };
 
-type StudentRow = {
-  enrollmentNumber: string;
-  name: string;
-};
+// Upload an attendance register kept in Excel (one row per student, one
+// column per class date) for one subject — e.g. everything from before the
+// portal was used. Nothing is written until the preview has been checked.
+export default function AttendanceUpload() {
+  const [ctx, setCtx] = useState<PickerState | null>(null);
+  const [fileName, setFileName] = useState('');
+  const [book, setBook] = useState<{ names: string[]; grids: Record<string, unknown[][]> } | null>(null);
+  const [sheet, setSheet] = useState('');
+  const [opts, setOpts] = useState<Opts>({ blank: 'present', unknown: 'present', missing: 'present' });
+  const [guessed, setGuessed] = useState<'present' | 'absent' | null>(null);
+  const [exclude, setExclude] = useState<Set<string>>(new Set()); // "date#lecture" left out by hand
+  const [existing, setExisting] = useState<Set<string> | null>(null);
+  const [onExisting, setOnExisting] = useState<'skip' | 'overwrite'>('skip');
+  const [status, setStatus] = useState<{ kind: 'ok' | 'error' | 'info'; text: string } | null>(null);
+  const [progress, setProgress] = useState<string>('');
+  const [inputKey, setInputKey] = useState(0); // bump to clear the file box
+  const [fromPortal, setFromPortal] = useState(false);
 
-const HEADER_ALIASES = {
-  enrollmentNumber: ['enrollmentnumber', 'enrollmentno', 'regno', 'regno.', 'rollno', 'registrationnumber'],
-  name: ['name', 'studentname', 'fullname'],
-};
+  const ctxKey = ctx ? `${ctx.batch!.key}|${ctx.cls!.key}|${ctx.semester}|${ctx.subject?.code}|${ctx.specialization}` : '';
 
-function normalizeHeader(h: string): string {
-  return h.toLowerCase().replace(/[\s._/()-]/g, '');
-}
-
-function headerMatchesField(normalizedHeader: string, aliases: string[]): boolean {
-  return aliases.some((alias) => normalizedHeader.includes(alias));
-}
-
-// Excel stores dates as either a JS Date object (if the workbook was read
-// with cellDates:true), a serial day-number (days since 1899-12-30), or
-// plain text — real exports use all three depending on how the original
-// sheet was formatted, so all three need handling rather than assuming one.
-function parseDateHeader(value: any): string | null {
-  if (value instanceof Date && !isNaN(value.getTime())) {
-    return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`;
-  }
-  if (typeof value === 'number' && value > 20000 && value < 60000) {
-    // Excel serial date: days since 1899-12-30
-    const epoch = new Date(Date.UTC(1899, 11, 30));
-    const date = new Date(epoch.getTime() + value * 86400000);
-    return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(date.getUTCDate()).padStart(2, '0')}`;
-  }
-  if (typeof value === 'string') {
-    const trimmed = value.trim();
-    // Already in YYYY-MM-DD
-    if (/^\d{4}-\d{1,2}-\d{1,2}$/.test(trimmed)) {
-      const [y, m, d] = trimmed.split('-').map(Number);
-      return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-    }
-    // DD/MM/YYYY or DD-MM-YYYY (Indian convention, not US MM/DD/YYYY)
-    const dmyMatch = trimmed.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
-    if (dmyMatch) {
-      const [, d, m, y] = dmyMatch;
-      return `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
-    }
-    // "1 Sep 2026" / "1-Sep-2026" style
-    const parsed = new Date(trimmed);
-    if (!isNaN(parsed.getTime())) {
-      return `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, '0')}-${String(parsed.getDate()).padStart(2, '0')}`;
-    }
-  }
-  return null;
-}
-
-// "P"/"Present"/"1"/"Y"/"Yes"/"✓" -> present. "A"/"Absent"/"0"/"N"/"No" ->
-// absent. Anything else (including blank) defaults to present — matching
-// the same "default present, exceptions only" philosophy the in-app
-// marking screen uses, since wrongly marking someone absent from an
-// ambiguous blank cell risks incorrectly flagging them below 75%, which
-// is worse than the reverse.
-function isMarkedAbsent(value: any): boolean {
-  if (value === undefined || value === null || value === '') return false;
-  const normalized = String(value).trim().toLowerCase();
-  return ['a', 'absent', '0', 'n', 'no', 'false'].includes(normalized);
-}
-
-function AttendanceUpload() {
-  const [roster, setRoster] = useState<RosterEntry[]>([]);
+  // How long each class in the sheet was (a lab register: 2). A portal
+  // download's Hours row overrides this per column.
+  const [sheetHours, setSheetHours] = useState(1);
   useEffect(() => {
-    getDocs(collection(db, 'roster')).then((snap) => {
-      setRoster(snap.docs.map((d) => d.data() as RosterEntry));
+    if (ctx?.subject) setSheetHours(/\b(lab|laboratory|workshop|practical)\b/i.test(ctx.subject.name) ? 2 : 1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ctxKey]);
+
+  // Years for dates written without one ("12/08", "12 Aug") come from the semester.
+  const yearFor = useMemo(() => {
+    if (!ctx) return (m: number) => (m >= 7 ? new Date().getFullYear() : new Date().getFullYear());
+    const w = semesterWindow(ctx.batch!.year, ctx.semester!);
+    const y = Number(w.from.slice(0, 4));
+    return (m: number) => (ctx.semester! % 2 === 1 ? (m >= 7 ? y : y + 1) : m <= 6 ? y : y - 1);
+  }, [ctx]);
+
+  const parsed: ParsedRegister | { error: string } | null = useMemo(() => {
+    if (!book || !sheet || !ctx) return null;
+    return parseRegister(book.grids[sheet] ?? [], yearFor);
+  }, [book, sheet, ctx, yearFor]);
+  const reg = parsed && !('error' in parsed) ? parsed : null;
+
+  useEffect(() => {
+    if (!reg) return;
+    const g = guessBlankMeaning(reg);
+    setGuessed(g);
+    setOpts((o) => ({ ...o, blank: g }));
+    setExclude(new Set());
+  }, [reg]);
+
+  const plan = useMemo(() => (reg && ctx ? planRegister(reg, opts, ctx.students, ctx.roster) : null), [reg, ctx, opts]);
+
+  // Problems with dates, per session.
+  const flags = useMemo(() => {
+    const m = new Map<string, { future: boolean; empty: boolean; notes: string[] }>();
+    if (!plan || !ctx) return m;
+    const win = semesterWindow(ctx.batch!.year, ctx.semester!);
+    for (const s of plan.sessions) {
+      m.set(`${s.date}#${s.lecture}`, {
+        future: s.date > todayIso(),
+        empty: s.empty,
+        notes: dateWarnings(s.date, { holidays: ctx.holidays, window: win }),
+      });
+    }
+    return m;
+  }, [plan, ctx]);
+
+  // Which of these classes already have attendance saved.
+  const idsFor = (date: string, lecture: number) =>
+    ctx ? ctx.cls!.targets.map((t) => sessionDocId({ branch: t.branch, admissionYear: ctx.batch!.year, section: t.section, subjectCode: ctx.subject!.code, date, lecture })) : [];
+  useEffect(() => {
+    setExisting(null);
+    if (!plan || !ctx?.subject) return;
+    let live = true;
+    const ids = plan.sessions.flatMap((s) => idsFor(s.date, s.lecture));
+    existingIds(ids).then((found) => live && setExisting(found)).catch(() => live && setExisting(new Set()));
+    return () => {
+      live = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [plan?.sessions.length, ctxKey, sheet, fileName]);
+
+  const already = (date: string, lecture: number) => !!existing && idsFor(date, lecture).some((id) => existing.has(id));
+
+  const included = useMemo(() => {
+    if (!plan) return [];
+    return plan.sessions.filter((s) => {
+      const k = `${s.date}#${s.lecture}`;
+      const f = flags.get(k);
+      if (exclude.has(k) || f?.future || f?.empty) return false;
+      if (onExisting === 'skip' && already(s.date, s.lecture)) return false;
+      return true;
     });
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [plan, flags, exclude, onExisting, existing]);
 
-  const [branch, setBranch] = useState('');
-  const [admissionYear, setAdmissionYear] = useState('');
-  const [section, setSection] = useState('');
-  const [subjectCode, setSubjectCode] = useState('');
-  const [subjectName, setSubjectName] = useState('');
-
-  // Real section values that actually exist for this branch+year in the
-  // roster — NOT free-typed. This is the fix for a real bug: a faculty
-  // member typing "CSE B" (a natural guess from how a timetable PDF
-  // labels sections) when the roster's actual convention for the same
-  // students is something entirely different (e.g. "CSE2") meant every
-  // uploaded attendance record silently matched zero real students —
-  // the write succeeded, but no student's app query ever found it.
-  const sectionOptions = useMemo(
-    () =>
-      Array.from(
-        new Set(
-          roster
-            .filter((r) => r.branch === branch.trim().toUpperCase() && String(r.admissionYear) === admissionYear.trim())
-            .map((r) => r.section),
-        ),
-      ).sort(),
-    [roster, branch, admissionYear],
-  );
-
-  const [status, setStatus] = useState('');
-  const [uploading, setUploading] = useState(false);
-  const [preview, setPreview] = useState<{
-    dates: string[];
-    students: StudentRow[];
-    absentByDate: Record<string, string[]>;
-    skippedColumns: string[];
-  } | null>(null);
-
-  const handleFile = async (file: File) => {
-    if (!branch.trim() || !admissionYear.trim() || !subjectCode.trim() || !subjectName.trim()) {
-      setStatus('Fill in Branch, Admission Year, Subject Code, and Subject Name first.');
-      return;
-    }
-    setStatus('Reading file...');
-    setPreview(null);
-    const XLSX = await import('xlsx');
-    const buffer = await file.arrayBuffer();
-    const workbook = XLSX.read(buffer, { type: 'array', cellDates: true });
-    const sheet = workbook.Sheets[workbook.SheetNames[0]];
-    const rows: any[][] = XLSX.utils.sheet_to_json(sheet, { header: 1 });
-
-    if (rows.length < 2) {
-      setStatus('This sheet appears to be empty.');
-      return;
-    }
-
-    // Find the header row the same way Roster Upload does — scan the
-    // first 10 rows for whichever one has recognizable Reg No / Name
-    // columns, skipping any title row above it.
-    let headerRowIndex = -1;
-    let enrollmentCol = -1;
-    let nameCol = -1;
-    for (let i = 0; i < Math.min(rows.length, 10); i++) {
-      const candidate = rows[i].map((h) => normalizeHeader(String(h ?? '')));
-      const eCol = candidate.findIndex((h) => headerMatchesField(h, HEADER_ALIASES.enrollmentNumber));
-      const nCol = candidate.findIndex((h) => headerMatchesField(h, HEADER_ALIASES.name));
-      if (eCol !== -1 && nCol !== -1) {
-        headerRowIndex = i;
-        enrollmentCol = eCol;
-        nameCol = nCol;
-        break;
-      }
-    }
-
-    if (headerRowIndex === -1) {
-      setStatus('Could not find Reg No / Name columns in the first 10 rows.');
-      return;
-    }
-
-    // Every other column in the header row is treated as a date column.
-    const headerRow = rows[headerRowIndex];
-    const dateColumns: { colIndex: number; date: string }[] = [];
-    const skippedColumns: string[] = [];
-    headerRow.forEach((cell, colIndex) => {
-      if (colIndex === enrollmentCol || colIndex === nameCol || cell === undefined || cell === '') return;
-      const parsed = parseDateHeader(cell);
-      if (parsed) {
-        dateColumns.push({ colIndex, date: parsed });
-      } else {
-        skippedColumns.push(String(cell));
-      }
-    });
-
-    if (dateColumns.length === 0) {
-      setStatus('No date columns could be recognized in the header row.');
-      return;
-    }
-
-    const students: StudentRow[] = [];
-    const absentByDate: Record<string, string[]> = {};
-    dateColumns.forEach((d) => (absentByDate[d.date] = []));
-
-    for (const row of rows.slice(headerRowIndex + 1)) {
-      if (!row || row.every((c) => c === undefined || c === '')) continue;
-      const enrollmentNumber = String(row[enrollmentCol] ?? '').trim().toUpperCase();
-      const name = String(row[nameCol] ?? '').trim();
-      if (!enrollmentNumber || !name) continue;
-      students.push({ enrollmentNumber, name });
-
-      for (const { colIndex, date } of dateColumns) {
-        if (isMarkedAbsent(row[colIndex])) {
-          absentByDate[date].push(enrollmentNumber);
+  const readFile = async (file: File) => {
+    setStatus(null);
+    setBook(null);
+    setSheet('');
+    setFileName(file.name);
+    try {
+      if (/\.pdf$/i.test(file.name) || file.type === 'application/pdf') {
+        // A register saved as PDF: rebuild the table from the text positions.
+        const { getPdfjs } = await import('./timetableImport');
+        const pdfjs = await getPdfjs();
+        const pdf = await pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
+        const pages = [];
+        for (let i = 1; i <= pdf.numPages; i++) {
+          const tc = await (await pdf.getPage(i)).getTextContent();
+          pages.push(
+            (tc.items as any[])
+              .filter((it) => typeof it.str === 'string')
+              .map((it) => ({ str: it.str as string, x: it.transform[4] as number, y: it.transform[5] as number, w: it.width as number })),
+          );
         }
+        const grid = gridFromPdfPages(pages);
+        if ('error' in grid) {
+          setStatus({ kind: 'error', text: grid.error });
+          return;
+        }
+        setFromPortal(false);
+        setOnExisting('skip');
+        setBook({ names: ['PDF'], grids: { PDF: grid } });
+        setSheet('PDF');
+        return;
       }
+      const XLSX = await import('xlsx');
+      const wb = XLSX.read(await file.arrayBuffer(), { type: 'array', raw: true });
+      const grids: Record<string, unknown[][]> = {};
+      for (const n of wb.SheetNames) {
+        grids[n] = XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, raw: true, defval: null, blankrows: true });
+      }
+      const names = wb.SheetNames.filter((n) => grids[n].length > 0);
+      if (!names.length) {
+        setStatus({ kind: 'error', text: 'Every sheet in this file is empty.' });
+        return;
+      }
+      setBook({ names, grids });
+      // A register downloaded from this portal (Summary + Key sheets): it's
+      // an update, so its classes replace what's saved.
+      const fromPortal = names.includes('Key') && names.includes('Summary');
+      setOnExisting(fromPortal ? 'overwrite' : 'skip');
+      setFromPortal(fromPortal);
+      // Pick the sheet for this subject, else the one naming this section, else the first.
+      const flat = (x: string) => x.replace(/[\s_-]+/g, '').toLowerCase();
+      const code = flat(ctx?.subject?.code ?? '');
+      const label = flat(ctx?.cls?.section ?? '');
+      setSheet(
+        names.find((n) => code && flat(n) === code) ??
+          names.find((n) => label && flat(n).includes(label)) ??
+          names.find((n) => n !== 'Summary' && n !== 'Key') ??
+          names[0],
+      );
+    } catch (e: any) {
+      setStatus({ kind: 'error', text: `Couldn’t open this file (${e.message}). Save it as .xlsx from Excel or Google Sheets and try again.` });
     }
-
-    setPreview({
-      dates: dateColumns.map((d) => d.date).sort(),
-      students,
-      absentByDate,
-      skippedColumns,
-    });
-    setStatus(
-      `Parsed ${students.length} students across ${dateColumns.length} dates.` +
-        (skippedColumns.length > 0 ? ` Skipped ${skippedColumns.length} unrecognized column(s) — see below.` : ''),
-    );
   };
 
-  const handleUpload = async () => {
-    if (!preview) return;
+  const upload = async () => {
+    if (!ctx?.subject || !plan || !included.length) return;
+    const overwriting = included.filter((s) => already(s.date, s.lecture)).length;
     if (
       !confirm(
-        `Write attendance for ${preview.dates.length} dates (${subjectCode.trim()}, ${branch.trim()} ${section.trim()})? This overwrites any existing record for the same class/subject/date combination.`,
+        `Save ${included.length} class${included.length === 1 ? '' : 'es'} of ${ctx.subject.code} for ${ctx.cls!.label}?` +
+          (overwriting ? `\n\n${overwriting} of them already had attendance saved — those will be replaced.` : ''),
       )
     )
       return;
-    setUploading(true);
-    setStatus('Uploading...');
+    const docs = included.flatMap((s) =>
+      splitByBranch(
+        ctx.cls!,
+        {
+          admissionYear: ctx.batch!.year,
+          subjectCode: ctx.subject!.code,
+          subjectName: ctx.subject!.name,
+          date: s.date,
+          lecture: s.lecture,
+          semester: ctx.semester!,
+          specialization: ctx.specialization || null,
+          hours: s.hours ?? sheetHours,
+          kind: (s.hours ?? sheetHours) > 1 ? 'lab' : 'lecture',
+          source: 'excel',
+        },
+        s.absent,
+        s.excused,
+        // "—" cells / students left out of a lab batch sheet: the class was
+        // only for the rest, so they aren't counted at all.
+        s.na.length ? ctx.students.filter((st) => !s.na.includes(st)) : ctx.students,
+        s.na.length > 0,
+      ),
+    );
+    setProgress(`Saving 0 of ${docs.length}…`);
     try {
-      const markedBy = auth.currentUser?.uid ?? 'web-upload';
-      // One doc per date, batched — well under Firestore's 500-write cap
-      // for any realistic number of class dates in a single sheet.
-      const batch = writeBatch(db);
-      for (const date of preview.dates) {
-        const id = `${branch.trim()}_${admissionYear.trim()}_${section.trim() || 'NONE'}_${subjectCode.trim()}_${date}`;
-        const ref = doc(db, 'attendanceSessions', id);
-        batch.set(ref, {
-          branch: branch.trim(),
-          admissionYear: Number(admissionYear.trim()),
-          section: section.trim() || null,
-          subjectCode: subjectCode.trim(),
-          subjectName: subjectName.trim(),
-          date,
-          absentEnrollmentNumbers: preview.absentByDate[date],
-          markedBy,
-          markedAt: serverTimestamp(),
-        });
-      }
-      await batch.commit();
-      setStatus(`Uploaded attendance for ${preview.dates.length} dates.`);
-      setPreview(null);
-    } catch (err: any) {
-      setStatus(`Upload failed: ${err.message}`);
+      await writeSessions(docs, (n) => setProgress(`Saving ${n} of ${docs.length}…`));
+      setStatus({ kind: 'ok', text: `Saved ${included.length} classes of ${ctx.subject.code}. Students see the updated percentage in the app now.` });
+      setBook(null);
+      setSheet('');
+      setFileName('');
+      setInputKey((k) => k + 1);
+    } catch (e: any) {
+      setStatus({ kind: 'error', text: `Saving stopped: ${e.message}. Classes saved before the error are kept — upload again to finish (choose “Skip” for already saved).` });
     } finally {
-      setUploading(false);
+      setProgress('');
     }
   };
 
+  const template = async () => {
+    if (!ctx) return;
+    const rows: (string | number | null)[][] = [
+      ['Reg. No.', 'Name', '12/08/2026', '13/08/2026', '14/08/2026'],
+      ...ctx.students.map((s) => [s.regNo, s.name, null, null, null]),
+    ];
+    await downloadXlsx(`Register_${(ctx.cls!.section ?? ctx.cls!.label).replace(/[^A-Za-z0-9]+/g, '-')}_${ctx.subject?.code ?? 'subject'}.xlsx`, [
+      { name: 'Register', rows, widths: [14, 28, 12, 12, 12] },
+      {
+        name: 'How to fill',
+        rows: [
+          ['One column per class: put the date as the heading (12/08/2026, 12 Aug, or an Excel date).'],
+          ['Two classes on the same day: use two columns with the same date (or write “12/08 L2”).'],
+          ['Cells: P = present, A = absent, OD / ML = on duty or leave (counts as attended).'],
+          ['Blank cells are fine — you choose on upload whether blank means present or absent.'],
+          ['Extra columns like Total or % are ignored.'],
+        ],
+        widths: [100],
+      },
+    ]);
+  };
+
+  const sessionsShown = plan?.sessions ?? [];
+
   return (
-    <div className="card" style={{ width: 680, padding: '2.5rem', margin: '3rem auto' }}>
-      <h1 style={{ fontSize: '1.5rem' }}>Upload Attendance Register</h1>
-      <p style={{ fontSize: '0.85rem', color: 'var(--ink-soft)' }}>
-        For faculty who already keep a running Excel register (one row per student, one column per
-        class date). Upload it here instead of re-entering it in the app — this covers one subject
-        per upload.
+    <div className="card att-card">
+      <h1 style={{ fontSize: '1.5rem' }}>Upload old attendance (Excel)</h1>
+      <p className="res-hint">
+        For registers kept in Excel: one row per student, one column per class date, for one subject. You’ll see exactly what
+        will be saved before anything is written.
       </p>
 
-      <div style={{ display: 'flex', gap: '1rem', marginTop: '1.5rem' }}>
-        <div style={{ flex: 1 }}>
-          <label>Branch</label>
-          <input type="text" value={branch} onChange={(e) => setBranch(e.target.value)} placeholder="e.g. CSE" />
-        </div>
-        <div style={{ flex: 1 }}>
-          <label>Admission Year</label>
-          <input type="number" value={admissionYear} onChange={(e) => setAdmissionYear(e.target.value)} placeholder="e.g. 2025" />
-        </div>
-        <div style={{ flex: 1 }}>
-          <label>Section</label>
-          <select value={section} onChange={(e) => setSection(e.target.value)} disabled={!branch.trim() || !admissionYear.trim()}>
-            <option value="">Select...</option>
-            {sectionOptions.map((s) => (
-              <option key={s} value={s}>
-                {s}
-              </option>
-            ))}
-          </select>
-        </div>
-      </div>
+      <AttendanceClassPicker subjectMode="required" onChange={setCtx} />
 
-      <div style={{ display: 'flex', gap: '1rem', marginTop: '1rem' }}>
-        <div style={{ flex: 1 }}>
-          <label>Subject Code</label>
-          <input type="text" value={subjectCode} onChange={(e) => setSubjectCode(e.target.value)} placeholder="e.g. CS301" />
-        </div>
-        <div style={{ flex: 2 }}>
-          <label>Subject Name</label>
-          <input type="text" value={subjectName} onChange={(e) => setSubjectName(e.target.value)} placeholder="e.g. Database Management Systems" />
-        </div>
-      </div>
-
-      <div style={{ marginTop: '1rem' }}>
-        <label>Excel file (.xlsx)</label>
-        <input
-          type="file"
-          accept=".xlsx,.xls"
-          onChange={(e) => {
-            const file = e.target.files?.[0];
-            if (file) handleFile(file);
-          }}
-        />
-      </div>
-
-      {status && <p style={{ marginTop: '1rem', fontSize: '0.9rem' }}>{status}</p>}
-
-      {preview && (
+      {ctx && (
         <>
-          {preview.skippedColumns.length > 0 && (
-            <p style={{ fontSize: '0.8rem', color: '#b91c1c', marginTop: '0.5rem' }}>
-              Unrecognized columns (ignored): {preview.skippedColumns.join(', ')}
-            </p>
-          )}
-
-          <div style={{ maxHeight: 280, overflowY: 'auto', marginTop: '1rem', border: '1px solid var(--line)', borderRadius: 4 }}>
-            {preview.dates.map((date) => (
-              <div key={date} style={{ padding: '0.5rem 0.7rem', borderBottom: '1px solid var(--line)', fontSize: '0.85rem' }}>
-                <strong>{date}</strong> — {preview.absentByDate[date].length} absent of {preview.students.length}
-                {preview.absentByDate[date].length > 0 && (
-                  <span style={{ color: 'var(--ink-soft)' }}> ({preview.absentByDate[date].join(', ')})</span>
-                )}
-              </div>
-            ))}
+          <div className="att-row" style={{ alignItems: 'flex-end' }}>
+            <div className="att-field att-wide">
+              <label>Register file (.xlsx, .xls, .csv or a PDF saved from Excel)</label>
+              <input
+                key={`${ctxKey}#${inputKey}`}
+                type="file"
+                accept=".xlsx,.xls,.csv,.pdf"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) readFile(f);
+                }}
+              />
+            </div>
+            <button type="button" className="button-secondary" onClick={template}>Get a blank register</button>
           </div>
 
-          <button onClick={handleUpload} disabled={uploading} style={{ width: '100%', marginTop: '1rem' }}>
-            {uploading ? 'Uploading...' : `Upload Attendance for ${preview.dates.length} Dates`}
-          </button>
+          {book && book.names.length > 1 && (
+            <div className="att-field" style={{ marginTop: '0.8rem' }}>
+              <label>Sheet</label>
+              <select value={sheet} onChange={(e) => setSheet(e.target.value)}>
+                {book.names.map((n) => (
+                  <option key={n} value={n}>{n}</option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {fromPortal && book && (
+            <p className="notice notice-ok">
+              This is a register downloaded from the portal — the classes in it will replace what’s saved, so your edits
+              in Excel become the record. Classes you deleted from the sheet are not deleted here (use Register for that).
+            </p>
+          )}
+          {parsed && 'error' in parsed && <p className="notice notice-error">{parsed.error}</p>}
+
+          {reg && plan && (
+            <>
+              <div className="att-summary">
+                <div><strong>{plan.matched}</strong><span>students matched</span></div>
+                <div><strong>{plan.sessions.length}</strong><span>class columns</span></div>
+                <div><strong>{included.length}</strong><span>will be saved</span></div>
+              </div>
+
+              <div className="att-row">
+                <div className="att-field">
+                  <label>Blank cell means</label>
+                  <select value={opts.blank} onChange={(e) => setOpts({ ...opts, blank: e.target.value as Opts['blank'] })}>
+                    <option value="present">Present{guessed === 'present' ? ' (looks right for this sheet)' : ''}</option>
+                    <option value="absent">Absent{guessed === 'absent' ? ' (looks right — sheet only marks P)' : ''}</option>
+                  </select>
+                </div>
+                <div className="att-field">
+                  <label>Students not in the sheet</label>
+                  <select value={opts.missing} onChange={(e) => setOpts({ ...opts, missing: e.target.value as Opts['missing'] })}>
+                    <option value="present">Count as present</option>
+                    <option value="absent">Count as absent</option>
+                    <option value="skip">Not in this class (other lab batch)</option>
+                  </select>
+                </div>
+                <div className="att-field">
+                  <label>Each class in this sheet is</label>
+                  <select value={sheetHours} onChange={(e) => setSheetHours(Number(e.target.value))}>
+                    <option value={1}>A lecture (1 hour)</option>
+                    <option value={2}>A lab / workshop (2 hours)</option>
+                    <option value={3}>A lab / workshop (3 hours)</option>
+                  </select>
+                </div>
+                {plan.unknownValues.length > 0 && (
+                  <div className="att-field">
+                    <label>Other values ({plan.unknownValues.slice(0, 3).map((u) => `“${u.value}”`).join(', ')})</label>
+                    <select value={opts.unknown} onChange={(e) => setOpts({ ...opts, unknown: e.target.value as Opts['unknown'] })}>
+                      <option value="present">Count as present</option>
+                      <option value="absent">Count as absent</option>
+                    </select>
+                  </div>
+                )}
+              </div>
+
+              {/* Everything that needs a look, in one place */}
+              <div className="att-issues">
+                {plan.missingFromSheet.length > 0 && (
+                  <p className="notice att-warn">
+                    {plan.missingFromSheet.length} student{plan.missingFromSheet.length === 1 ? ' is' : 's are'} in this class but not in the
+                    sheet: {plan.missingFromSheet.slice(0, 8).map((s) => s.regNo).join(', ')}
+                    {plan.missingFromSheet.length > 8 ? '…' : ''}.
+                  </p>
+                )}
+                {plan.elsewhere.length > 0 && (
+                  <p className="notice att-warn">
+                    Skipped {plan.elsewhere.length} row{plan.elsewhere.length === 1 ? '' : 's'} of students from another class:{' '}
+                    {plan.elsewhere.slice(0, 5).map((s) => `${s.regNo} (${s.where})`).join(', ')}
+                    {plan.elsewhere.length > 5 ? '…' : ''}. Wrong sheet or wrong class picked?
+                  </p>
+                )}
+                {plan.unknownRegs.length > 0 && (
+                  <p className="notice att-warn">
+                    Skipped {plan.unknownRegs.length} row{plan.unknownRegs.length === 1 ? '' : 's'} not in the roster:{' '}
+                    {plan.unknownRegs.slice(0, 6).map((s) => s.regNo).join(', ')}
+                    {plan.unknownRegs.length > 6 ? '…' : ''}.
+                  </p>
+                )}
+                {plan.ambiguous.length > 0 && (
+                  <p className="notice att-warn">
+                    Couldn’t tell which student these short numbers mean: {plan.ambiguous.join(', ')} — use the full Reg. No. for them.
+                  </p>
+                )}
+                {reg.duplicateRegs.length > 0 && (
+                  <p className="notice att-warn">Listed twice (the lower row is used): {reg.duplicateRegs.join(', ')}.</p>
+                )}
+                {reg.skippedHeaders.length > 0 && (
+                  <p className="res-hint">Ignored columns: {reg.skippedHeaders.join(', ')}.</p>
+                )}
+              </div>
+
+              {existing && existing.size > 0 && (
+                <div className="att-field" style={{ marginTop: '0.8rem' }}>
+                  <label>Classes that already have attendance saved</label>
+                  <select value={onExisting} onChange={(e) => setOnExisting(e.target.value as 'skip' | 'overwrite')}>
+                    <option value="skip">Skip them (keep what’s saved)</option>
+                    <option value="overwrite">Replace them with this sheet</option>
+                  </select>
+                </div>
+              )}
+
+              <div className="att-scroll">
+                <table className="att-table">
+                  <thead>
+                    <tr>
+                      <th style={{ width: 34 }} />
+                      <th>Class</th>
+                      <th>Present</th>
+                      <th>Absent</th>
+                      <th>OD</th>
+                      <th>Notes</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sessionsShown.map((s) => {
+                      const k = `${s.date}#${s.lecture}`;
+                      const f = flags.get(k)!;
+                      const isOld = already(s.date, s.lecture);
+                      const blocked = f.future || f.empty || (isOld && onExisting === 'skip');
+                      const on = !blocked && !exclude.has(k);
+                      return (
+                        <tr key={k} className={on ? '' : 'att-off'}>
+                          <td>
+                            <input
+                              type="checkbox"
+                              checked={on}
+                              disabled={blocked}
+                              onChange={(e) =>
+                                setExclude((prev) => {
+                                  const n = new Set(prev);
+                                  if (e.target.checked) n.delete(k);
+                                  else n.add(k);
+                                  return n;
+                                })
+                              }
+                              style={{ width: 'auto' }}
+                            />
+                          </td>
+                          <td>
+                            {prettyDate(s.date)} {s.date.slice(0, 4)}
+                            {s.lecture > 1 ? ` · ${s.lecture}${['', 'st', 'nd', 'rd'][s.lecture] ?? 'th'} class` : ''}
+                          </td>
+                          <td>{s.present}</td>
+                          <td title={s.absent.map((x) => x.regNo).join(', ')}>{s.absent.length}</td>
+                          <td>{s.excused.length || ''}</td>
+                          <td className="att-muted">
+                            {[
+                              f.future && 'future date — skipped',
+                              f.empty && 'column is empty — skipped',
+                              isOld && (onExisting === 'skip' ? 'already saved — skipped' : 'already saved — will replace'),
+                              ...f.notes,
+                            ]
+                              .filter(Boolean)
+                              .join(' · ')}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              <button type="button" onClick={upload} disabled={!!progress || !included.length || existing === null} style={{ width: '100%', marginTop: '1rem' }}>
+                {progress ||
+                  (existing === null
+                    ? 'Checking what’s already saved…'
+                    : included.length
+                      ? `Save ${included.length} class${included.length === 1 ? '' : 'es'} of ${ctx.subject!.code}`
+                      : 'Nothing to save')}
+              </button>
+            </>
+          )}
         </>
+      )}
+
+      {status && (
+        <p className={`notice ${status.kind === 'ok' ? 'notice-ok' : status.kind === 'error' ? 'notice-error' : ''}`}>{status.text}</p>
       )}
     </div>
   );
 }
-
-export default AttendanceUpload;

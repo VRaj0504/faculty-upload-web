@@ -1,0 +1,425 @@
+diff --git a/src/App.tsx b/src/App.tsx
+index 9bc82fa..f4254a2 100644
+--- a/src/App.tsx
++++ b/src/App.tsx
+@@ -17,6 +17,7 @@ import AttendanceUpload from './AttendanceUpload';
+ import AssignGrades from './AssignGrades';
+ import ClassCGPA from './ClassCGPA';
+ import MarkAttendance from './MarkAttendance';
++import InboxImports from './InboxImports';
+ 
+ function App() {
+   const [user, setUser] = useState<User | null>(null);
+@@ -25,7 +26,7 @@ function App() {
+   // This MUST be declared here, alongside the other hooks — not after an
+   // early return — since React requires every hook to run in the same
+   // order on every single render, no exceptions.
+-  const [activeTab, setActiveTab] = useState<'resources' | 'roster' | 'curriculum' | 'timetable' | 'messSubscribers' | 'attendance' | 'grades' | 'cgpa'>('resources');
++  const [activeTab, setActiveTab] = useState<'resources' | 'inboxImports' | 'roster' | 'curriculum' | 'timetable' | 'messSubscribers' | 'attendance' | 'grades' | 'cgpa'>('resources');
+   // Roster and Curriculum each have their own Upload/Browse sub-tab —
+   // bulk-file a whole spreadsheet, or search/fix/remove individual
+   // entries without needing one.
+@@ -88,6 +89,7 @@ function App() {
+           <SegmentedControl
+             options={[
+               { value: 'resources', label: 'Resources' },
++              { value: 'inboxImports', label: 'Inbox Imports' },
+               { value: 'roster', label: 'Roster' },
+               { value: 'curriculum', label: 'Curriculum' },
+               { value: 'timetable', label: 'Timetable' },
+@@ -107,6 +109,12 @@ function App() {
+           </div>
+         )}
+ 
++        {activeTab === 'inboxImports' && (
++          <div className="panel-enter" key="inboxImports">
++            <InboxImports />
++          </div>
++        )}
++
+         {activeTab === 'roster' && (
+           <div className="panel-enter" key={`roster-${rosterMode}`}>
+             <div className="subtab-bar">
+diff --git a/src/InboxImports.tsx b/src/InboxImports.tsx
+new file mode 100644
+index 0000000..5986f25
+--- /dev/null
++++ b/src/InboxImports.tsx
+@@ -0,0 +1,377 @@
++import { useEffect, useState } from 'react';
++import {
++  collection,
++  query,
++  where,
++  orderBy,
++  onSnapshot,
++  doc,
++  updateDoc,
++  addDoc,
++  serverTimestamp,
++  Timestamp,
++} from 'firebase/firestore';
++import { ref, getDownloadURL } from 'firebase/storage';
++import { auth, db, storage } from './firebaseConfig';
++
++const BRANCHES = ['CSE', 'ECE', 'MNC'] as const;
++
++type TargetScope = {
++  scope: 'all' | 'branch' | 'section';
++  branch: 'CSE' | 'ECE' | 'MNC' | null;
++  semester: number | null;
++  section: string | null;
++  admissionYear: number | null;
++  specialization: string | null;
++};
++
++type PendingImport = {
++  id: string;
++  fromEmail: string;
++  fromName: string;
++  subject: string;
++  bodySnippet: string;
++  attachments: { filename: string; storagePath: string; mimeType: string }[];
++  contentType: 'resource' | 'timetable' | 'notice' | 'unclear';
++  confidence: 'high' | 'medium' | 'low';
++  title: string;
++  targetScope: TargetScope;
++  resourceType: 'Notes' | 'PYQ' | 'Slides' | null;
++  resourceSubject: string | null;
++  noticeCategory: 'Academic' | 'Placement' | 'Event' | 'General' | null;
++  noticeDescription: string | null;
++  reasoning: string;
++  status: 'pending' | 'approved' | 'rejected';
++  receivedAt: Timestamp | null;
++};
++
++// Timetable emails are deliberately NOT auto-published from here — a
++// timetable update needs day/time-slot data no plain-language email will
++// reliably contain. Approving a timetable import here just tells the
++// reviewer "here's the attachment, go run it through the Timetable
++// Editor's existing OCR/Excel import", which already has its own
++// review-before-save step.
++function isDirectlyPublishable(contentType: PendingImport['contentType']) {
++  return contentType === 'resource' || contentType === 'notice';
++}
++
++function InboxImports() {
++  const [imports, setImports] = useState<PendingImport[]>([]);
++  const [error, setError] = useState('');
++  const [busyId, setBusyId] = useState<string | null>(null);
++  const [drafts, setDrafts] = useState<Record<string, Partial<PendingImport>>>({});
++  const [attachmentUrls, setAttachmentUrls] = useState<Record<string, string>>({});
++
++  useEffect(() => {
++    const q = query(
++      collection(db, 'pendingImports'),
++      where('status', '==', 'pending'),
++      orderBy('receivedAt', 'desc'),
++    );
++    const unsubscribe = onSnapshot(
++      q,
++      (snapshot) => {
++        setError('');
++        setImports(snapshot.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<PendingImport, 'id'>) })));
++      },
++      (err) => {
++        console.error('Inbox Imports query failed:', err);
++        setError(
++          'Could not load imports. Open the browser console (F12) — Firebase usually prints a link there to create a missing index; click it, wait a minute, then reload.',
++        );
++      },
++    );
++    return () => unsubscribe();
++  }, []);
++
++  const draftFor = (item: PendingImport) => ({ ...item, ...drafts[item.id] });
++
++  const updateDraft = (id: string, patch: Partial<PendingImport>) => {
++    setDrafts((prev) => ({ ...prev, [id]: { ...prev[id], ...patch } }));
++  };
++
++  const resolveAttachmentUrl = async (storagePath: string) => {
++    if (attachmentUrls[storagePath]) return;
++    try {
++      const url = await getDownloadURL(ref(storage, storagePath));
++      setAttachmentUrls((prev) => ({ ...prev, [storagePath]: url }));
++    } catch (err: any) {
++      console.error(`Could not resolve ${storagePath}:`, err.message);
++    }
++  };
++
++  const handleReject = async (item: PendingImport) => {
++    const reason = prompt(`Reject "${item.title}"? Optional reason:`) ?? '';
++    setBusyId(item.id);
++    try {
++      await updateDoc(doc(db, 'pendingImports', item.id), {
++        status: 'rejected',
++        reviewedBy: auth.currentUser?.uid,
++        reviewedAt: serverTimestamp(),
++        rejectionReason: reason,
++      });
++    } catch (err: any) {
++      alert(`Could not reject: ${err.message}`);
++    } finally {
++      setBusyId(null);
++    }
++  };
++
++  // Publishing writes into the SAME collections the mobile app's Resources
++  // and Notices screens already read from — same shape as
++  // resourceService.uploadResource() / noticesService.createNotice(), just
++  // sourced from the reviewer's (possibly edited) draft instead of a form.
++  const handleApprove = async (item: PendingImport) => {
++    const current = draftFor(item);
++    setBusyId(item.id);
++    try {
++      if (current.contentType === 'resource') {
++        const attachment = current.attachments[0];
++        if (!attachment) throw new Error('No attachment to file as a resource.');
++        const fileUrl = await getDownloadURL(ref(storage, attachment.storagePath));
++        const targetBranches =
++          current.targetScope.scope === 'all' ? BRANCHES : [current.targetScope.branch ?? 'CSE'];
++        await Promise.all(
++          targetBranches.map((b) =>
++            addDoc(collection(db, 'resources'), {
++              title: current.title,
++              subject: current.resourceSubject || current.title,
++              branch: b,
++              semester: current.targetScope.semester ?? 1,
++              type: current.resourceType ?? 'Notes',
++              fileUrl,
++              storagePath: attachment.storagePath,
++              uploadedBy: auth.currentUser?.uid,
++              uploadedByName: current.fromName,
++              createdAt: serverTimestamp(),
++            }),
++          ),
++        );
++      } else if (current.contentType === 'notice') {
++        await addDoc(collection(db, 'notices'), {
++          title: current.title,
++          description: current.noticeDescription || current.bodySnippet,
++          category: current.noticeCategory ?? 'General',
++          clubId: null,
++          clubName: null,
++          createdBy: auth.currentUser?.uid,
++          createdByName: current.fromName,
++          createdAt: serverTimestamp(),
++          targetBranch: current.targetScope.scope === 'all' ? null : current.targetScope.branch,
++          targetSection: current.targetScope.section,
++          targetAdmissionYear: current.targetScope.admissionYear,
++          targetSpecialization: current.targetScope.specialization,
++        });
++      } else {
++        throw new Error('Timetable/unclear items are reviewed in their own tab, not published from here.');
++      }
++
++      await updateDoc(doc(db, 'pendingImports', item.id), {
++        status: 'approved',
++        reviewedBy: auth.currentUser?.uid,
++        reviewedAt: serverTimestamp(),
++      });
++    } catch (err: any) {
++      alert(`Could not publish: ${err.message}`);
++    } finally {
++      setBusyId(null);
++    }
++  };
++
++  return (
++    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '2rem 0' }}>
++      <div className="card" style={{ width: 640, padding: '2rem 2.5rem' }}>
++        <h1 style={{ fontSize: '1.5rem' }}>Inbox Imports</h1>
++        <p style={{ color: 'var(--ink-soft)', fontSize: '0.9rem' }}>
++          Emails faculty send to the resources inbox, auto-classified — review and publish, or reject.
++        </p>
++
++        {error && <p className="error-text" style={{ marginTop: '1rem' }}>{error}</p>}
++        {!error && imports.length === 0 && (
++          <p style={{ color: 'var(--ink-soft)', marginTop: '1rem' }}>Nothing waiting for review.</p>
++        )}
++
++        {imports.map((item) => {
++          const current = draftFor(item);
++          const busy = busyId === item.id;
++          return (
++            <div key={item.id} className="card" style={{ marginTop: '1.2rem', padding: '1.4rem 1.6rem' }}>
++              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
++                <div>
++                  <div style={{ fontWeight: 600 }}>{item.subject}</div>
++                  <div className="eyebrow" style={{ fontSize: '0.7rem', marginTop: '0.2rem' }}>
++                    {item.fromName} · {item.fromEmail}
++                  </div>
++                </div>
++                <span
++                  className="eyebrow"
++                  style={{
++                    fontSize: '0.65rem',
++                    padding: '0.2rem 0.5rem',
++                    borderRadius: 6,
++                    backgroundColor:
++                      item.confidence === 'high' ? '#dcfce7' : item.confidence === 'medium' ? '#fef9c3' : '#fee2e2',
++                  }}
++                >
++                  {item.confidence} confidence
++                </span>
++              </div>
++
++              <p style={{ fontSize: '0.85rem', marginTop: '0.6rem', color: 'var(--ink-soft)' }}>{item.reasoning}</p>
++              {item.bodySnippet && (
++                <p style={{ fontSize: '0.85rem', marginTop: '0.4rem', whiteSpace: 'pre-wrap' }}>
++                  {item.bodySnippet}
++                </p>
++              )}
++
++              {item.attachments.map((att) => (
++                <div key={att.storagePath} style={{ marginTop: '0.5rem' }}>
++                  {attachmentUrls[att.storagePath] ? (
++                    <a href={attachmentUrls[att.storagePath]} target="_blank" rel="noreferrer">
++                      {att.filename}
++                    </a>
++                  ) : (
++                    <button className="button-secondary" onClick={() => resolveAttachmentUrl(att.storagePath)}>
++                      Load {att.filename}
++                    </button>
++                  )}
++                </div>
++              ))}
++
++              <div style={{ display: 'flex', gap: '0.8rem', marginTop: '1rem' }}>
++                <div style={{ flex: 1 }}>
++                  <label>Content type</label>
++                  <select
++                    value={current.contentType}
++                    onChange={(e) => updateDraft(item.id, { contentType: e.target.value as PendingImport['contentType'] })}
++                  >
++                    <option value="resource">Resource</option>
++                    <option value="notice">Notice</option>
++                    <option value="timetable">Timetable (review in Timetable Editor)</option>
++                    <option value="unclear">Unclear</option>
++                  </select>
++                </div>
++                <div style={{ flex: 1 }}>
++                  <label>Title</label>
++                  <input value={current.title} onChange={(e) => updateDraft(item.id, { title: e.target.value })} />
++                </div>
++              </div>
++
++              <div style={{ display: 'flex', gap: '0.8rem', marginTop: '0.8rem' }}>
++                <div style={{ flex: 1 }}>
++                  <label>Scope</label>
++                  <select
++                    value={current.targetScope.scope}
++                    onChange={(e) =>
++                      updateDraft(item.id, { targetScope: { ...current.targetScope, scope: e.target.value as TargetScope['scope'] } })
++                    }
++                  >
++                    <option value="all">Whole college</option>
++                    <option value="branch">One branch</option>
++                    <option value="section">One section</option>
++                  </select>
++                </div>
++                {current.targetScope.scope !== 'all' && (
++                  <div style={{ flex: 1 }}>
++                    <label>Branch</label>
++                    <select
++                      value={current.targetScope.branch ?? 'CSE'}
++                      onChange={(e) =>
++                        updateDraft(item.id, { targetScope: { ...current.targetScope, branch: e.target.value as TargetScope['branch'] } })
++                      }
++                    >
++                      {BRANCHES.map((b) => (
++                        <option key={b} value={b}>{b}</option>
++                      ))}
++                    </select>
++                  </div>
++                )}
++                {current.targetScope.scope !== 'all' && (
++                  <div style={{ flex: 1 }}>
++                    <label>Semester</label>
++                    <input
++                      type="number"
++                      min={1}
++                      max={8}
++                      value={current.targetScope.semester ?? ''}
++                      onChange={(e) =>
++                        updateDraft(item.id, {
++                          targetScope: { ...current.targetScope, semester: e.target.value ? Number(e.target.value) : null },
++                        })
++                      }
++                    />
++                  </div>
++                )}
++                {current.targetScope.scope === 'section' && (
++                  <div style={{ flex: 1 }}>
++                    <label>Section</label>
++                    <input
++                      value={current.targetScope.section ?? ''}
++                      onChange={(e) =>
++                        updateDraft(item.id, { targetScope: { ...current.targetScope, section: e.target.value } })
++                      }
++                    />
++                  </div>
++                )}
++              </div>
++
++              {current.contentType === 'resource' && (
++                <div style={{ display: 'flex', gap: '0.8rem', marginTop: '0.8rem' }}>
++                  <div style={{ flex: 1 }}>
++                    <label>Subject</label>
++                    <input
++                      value={current.resourceSubject ?? ''}
++                      onChange={(e) => updateDraft(item.id, { resourceSubject: e.target.value })}
++                    />
++                  </div>
++                  <div style={{ flex: 1 }}>
++                    <label>Type</label>
++                    <select
++                      value={current.resourceType ?? 'Notes'}
++                      onChange={(e) => updateDraft(item.id, { resourceType: e.target.value as PendingImport['resourceType'] })}
++                    >
++                      <option value="Notes">Notes</option>
++                      <option value="PYQ">PYQ</option>
++                      <option value="Slides">Slides</option>
++                    </select>
++                  </div>
++                </div>
++              )}
++
++              {current.contentType === 'notice' && (
++                <div style={{ marginTop: '0.8rem' }}>
++                  <label>Notice text</label>
++                  <textarea
++                    value={current.noticeDescription ?? ''}
++                    onChange={(e) => updateDraft(item.id, { noticeDescription: e.target.value })}
++                    rows={3}
++                  />
++                </div>
++              )}
++
++              <div style={{ display: 'flex', gap: '0.8rem', marginTop: '1.2rem' }}>
++                <button
++                  onClick={() => handleApprove(item)}
++                  disabled={busy || !isDirectlyPublishable(current.contentType)}
++                  style={{ flex: 1 }}
++                  title={
++                    isDirectlyPublishable(current.contentType)
++                      ? undefined
++                      : 'Timetable imports are approved from the Timetable Editor tab, using its attachment.'
++                  }
++                >
++                  {busy ? 'Publishing…' : 'Approve & Publish'}
++                </button>
++                <button onClick={() => handleReject(item)} disabled={busy} className="button-secondary" style={{ flex: 1 }}>
++                  Reject
++                </button>
++              </div>
++            </div>
++          );
++        })}
++      </div>
++    </div>
++  );
++}
++
++export default InboxImports;

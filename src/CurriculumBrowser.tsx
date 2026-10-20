@@ -217,12 +217,16 @@ function CurriculumBrowser() {
               style={{ marginTop: '0.8rem', padding: '1rem', border: '1px solid var(--line)', borderRadius: 4 }}
             >
               <div style={{ display: 'flex', gap: '0.6rem', flexWrap: 'wrap' }}>
-                <input
+                <select
                   style={{ flex: '1 1 100px' }}
-                  placeholder="Branch"
                   value={addDraft.branch}
                   onChange={(e) => setAddDraft((d) => ({ ...d, branch: e.target.value }))}
-                />
+                >
+                  <option value="">Branch…</option>
+                  {Array.from(new Set(['CSE', 'ECE', 'MNC', ...rows.map((r) => r.branch).filter(Boolean)])).sort().map((b) => (
+                    <option key={b} value={b}>{b}</option>
+                  ))}
+                </select>
                 <select
                   style={{ flex: '1 1 100px' }}
                   value={addDraft.semester}

@@ -14,6 +14,12 @@ type RosterRow = {
   // students sharing a section with CSE students) doesn't need this, since
   // branch alone already distinguishes them.
   specialization?: string;
+  // Omitted for a UG student (undefined here means UG everywhere this
+  // field is read — see getCurrentSemester in src/utils/academicInfo.ts),
+  // set to 'PG' only when the reg. no. itself says so (see
+  // inferProgram below) — an M.Tech's 2-year program caps their semester
+  // count at 4 instead of 8, so this can't be silently left as UG.
+  program?: 'UG' | 'PG';
 };
 
 // Required fields — a sheet is skipped if any of these columns can't be
@@ -40,6 +46,9 @@ const HEADER_ALIASES: Record<keyof RosterRow, string[]> = {
   section: ['section', 'sec'],
   admissionYear: ['admissionyear', 'yearofadmission', 'batch', 'batchyear', 'admnyear'],
   specialization: ['specialization', 'specialisation', 'stream', 'track'],
+  // No column ever maps to this — program is always inferred from the
+  // reg. no. itself (see inferProgram below), never read from a sheet.
+  program: [],
 };
 
 function normalizeHeader(h: string): string {
@@ -85,11 +94,30 @@ function classifyBranch(raw: string): { branch: string; specialization?: string 
   if (lower.includes('mathematics and computing') || /\bmnc\b/i.test(b)) {
     return { branch: 'MNC' };
   }
+  // Checked before the plain "electronics and communication" case below,
+  // which would otherwise match first and swallow the specialization —
+  // an M.Tech in one of these still says "Electronics and Communication
+  // Engineering" first, the parenthesized specialization comes after.
+  if (lower.includes('vlsi')) {
+    return { branch: 'ECE', specialization: 'VLSI' };
+  }
+  if (lower.includes('defence and space') || lower.includes('defense and space')) {
+    return { branch: 'ECE', specialization: 'Defence and Space Electronics' };
+  }
   if (lower.includes('electronics and communication') || /\bece\b/i.test(b)) {
     return { branch: 'ECE' };
   }
   if (lower.includes('cyber security')) {
     return { branch: 'CSE', specialization: 'Cyber Security' };
+  }
+  // Checked before the plainer "artificial intelligence" / "machine
+  // learning" case below, for the same shadowing reason as VLSI above —
+  // an M.Tech in this specialization still says "Computer Science and
+  // Engineering" first, and its text also contains "Artificial
+  // Intelligence", which would otherwise get it misclassified as the
+  // UG-style AI/ML specialization instead of this more specific one.
+  if (lower.includes('data science')) {
+    return { branch: 'CSE', specialization: 'Data Science and Artificial Intelligence' };
   }
   if (lower.includes('artificial intelligence') || lower.includes('machine learning')) {
     return { branch: 'CSE', specialization: 'AI/ML' };
@@ -114,6 +142,25 @@ function titleCase(name: string): string {
     .filter(Boolean)
     .map((w) => w[0].toUpperCase() + w.slice(1))
     .join(' ');
+}
+
+// IIIT Surat's own numbering convention distinguishes these outright —
+// every PG (M.Tech) reg. no. we've seen starts with "PG" (e.g.
+// "PG26DSAI01"), same as every UG one starts with "UG" or "UI". Inferred
+// automatically here rather than needing a manual selector, the same
+// way classifyBranch above infers branch from the Branch column's text
+// instead of asking the uploader to pick it from a dropdown.
+// The batch is written into every reg. no. ("UG26CSE014" → 2026), so it
+// always wins over a year typed in by hand or a sheet column — a 2nd-year
+// sheet uploaded with "2026" typed in was putting seniors' sections
+// (DSAI, VLSI…) under 1st Year everywhere a year is picked.
+function yearFromRegNo(regNo: string): number | null {
+  const m = /^(?:UG|PG)(\d{2})/i.exec(regNo.trim());
+  return m ? 2000 + Number(m[1]) : null;
+}
+
+function inferProgram(regNo: string): 'UG' | 'PG' {
+  return /^pg/i.test(regNo.trim()) ? 'PG' : 'UG';
 }
 
 type SheetParseResult = {
@@ -209,9 +256,9 @@ function buildRowsForSheet(
     const section = needsManualSection
       ? sheet.sectionOverride.trim()
       : String(row[sheet.mapping.section!] ?? '').trim();
-    const admissionYear = needsManualYear
-      ? Number(fallbackAdmissionYear)
-      : Number(row[sheet.mapping.admissionYear!]);
+    const admissionYear =
+      yearFromRegNo(regNo) ??
+      (needsManualYear ? Number(fallbackAdmissionYear) : Number(row[sheet.mapping.admissionYear!]));
     // A column explicitly named Specialization (if present) always wins
     // over whatever classifyBranch derived from the Branch text itself.
     const columnSpecialization =
@@ -219,6 +266,7 @@ function buildRowsForSheet(
         ? String(row[sheet.mapping.specialization] ?? '').trim()
         : '';
     const specialization = columnSpecialization || derivedSpecialization || '';
+    const program = inferProgram(regNo);
 
     rows.push({
       regNo,
@@ -227,6 +275,7 @@ function buildRowsForSheet(
       section,
       admissionYear,
       ...(specialization ? { specialization } : {}),
+      ...(program === 'PG' ? { program } : {}),
     });
   }
 
@@ -324,7 +373,7 @@ function RosterUpload() {
     // confirmation elsewhere in this app, not less.
     if (
       !confirm(
-        `Upload ${preview.length} students to the roster? Any existing student sharing a reg. no. with one here will be overwritten with the new row's data.`,
+        `Upload ${preview.length} students to the roster? Any existing student sharing a reg. no. with one here will be updated with the new row's data.`,
       )
     )
       return;
@@ -343,7 +392,9 @@ function RosterUpload() {
           // student twice just overwrites their existing entry, instead
           // of creating a duplicate.
           const ref = doc(db, 'roster', student.regNo);
-          batch.set(ref, student);
+          // merge: true keeps fields this sheet doesn't have (e.g. specialization,
+          // program) instead of wiping them from the existing roster doc.
+          batch.set(ref, student, { merge: true });
         });
         await batch.commit();
       }
@@ -439,6 +490,7 @@ function RosterUpload() {
               <div key={`${row.regNo}-${i}`} className="list-row" style={{ padding: '0.4rem 0.7rem', borderBottom: '1px solid var(--line)', fontSize: '0.85rem' }}>
                 {row.regNo} — {row.name} — {row.branch} / {row.section}
                 {row.specialization ? ` (${row.specialization})` : ''} — {row.admissionYear}
+                {row.program === 'PG' ? ' — PG' : ''}
               </div>
             ))}
             {preview.length > 15 && (

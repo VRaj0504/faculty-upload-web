@@ -1,14 +1,18 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, type ReactElement } from 'react';
 import { doc, getDoc, setDoc, serverTimestamp, collection, getDocs } from 'firebase/firestore';
 import { ref, uploadBytes } from 'firebase/storage';
 import { httpsCallable } from 'firebase/functions';
 import { db, storage, functions, auth } from './firebaseConfig';
+import { curriculum } from './curriculum';
+import { FACULTY_LEGEND } from './facultyLegend';
+import { cleanDays, loadRoomAliases } from './roomNames';
 import {
   parseSpreadsheetFile,
   renderPdfFirstPageToJpegBlob,
   parseAnySpreadsheetAllSections,
   renderAllPdfPagesToJpegBlobs,
   detectSectionFromHeaderText,
+  WHOLE_COLLEGE_TIMETABLE_TEMPLATE_CSV,
   type MultiSectionGroup,
 } from './timetableImport';
 
@@ -50,6 +54,612 @@ function emptySlot(): TimetableSlot {
 
 function emptyWeek(): TimetableDay[] {
   return WEEKDAYS.map((day) => ({ day, slots: [] }));
+}
+
+// Fixed-name subjects for a branch+semester, from the same static list
+// CurriculumUpload.tsx seeds Firestore from — used here to populate a
+// real dropdown instead of a free-text Subject Code field, so a typo
+// can no longer produce a code that doesn't exist. Electives are
+// deliberately absent from `curriculum` (their real name varies per
+// student), which is why the dropdown always also offers an "Other /
+// elective" escape hatch that falls back to free text for that one row.
+function subjectOptionsFor(branchValue: string, semesterValue: string): { code: string; name: string }[] {
+  const branchKey = branchValue.trim().toUpperCase() as keyof typeof curriculum;
+  const semesterNum = Number(semesterValue);
+  if (!curriculum[branchKey] || !semesterNum) return [];
+  return curriculum[branchKey][semesterNum] ?? [];
+}
+
+// The aSc PDFs/Excel this data was originally transcribed from write
+// codes WITH a space ("AS 101"), but curriculum.ts stores them without
+// one ("AS101") — a straight === comparison treats those as two
+// different codes and wrongly falls back to "Other", even though it's
+// a perfectly real, listed subject. Comparing with spaces and case
+// stripped fixes that without changing what's actually stored.
+function normalizeCode(code: string): string {
+  return code.replace(/\s+/g, '').toUpperCase();
+}
+
+function matchCurriculumOption(
+  options: { code: string; name: string }[],
+  code: string,
+): { code: string; name: string } | undefined {
+  return options.find((o) => normalizeCode(o.code) === normalizeCode(code));
+}
+
+// Faculty initials + full name, for the shared <datalist> below —
+// typing still works (so a genuinely new or multi-faculty combo like
+// "ND/BP" is never blocked), but anyone already in the legend now
+// shows up as a suggestion instead of needing to be retyped from
+// memory.
+const FACULTY_DATALIST_OPTIONS = Object.entries(FACULTY_LEGEND).map(([initials, name]) => ({
+  initials,
+  name,
+}));
+
+// One editable class row — Subject Code as a curriculum-driven dropdown
+// (auto-fills Subject Name, with an "Other / elective" escape hatch to
+// free text for anything not in the fixed list), Faculty as a free-text
+// field suggested from FACULTY_LEGEND via the shared datalist. Used by
+// both the single-section editor below and the bulk whole-college
+// preview's per-section slot editor, so a typo is caught in either
+// workflow the same way, not just the slower one.
+function SlotRow({
+  slot,
+  branch,
+  semester,
+  onChange,
+  onRemove,
+}: {
+  slot: TimetableSlot;
+  branch: string;
+  semester: string;
+  onChange: (changes: Partial<TimetableSlot>) => void;
+  onRemove: () => void;
+}) {
+  const subjectOptions = subjectOptionsFor(branch, semester);
+  const matchedOption = matchCurriculumOption(subjectOptions, slot.subjectCode);
+  const isKnownCode = subjectOptions.length === 0 || !!matchedOption;
+  return (
+    <div
+      style={{
+        display: 'flex',
+        gap: '0.4rem',
+        alignItems: 'center',
+        marginBottom: '0.4rem',
+        fontSize: '0.8rem',
+        flexWrap: 'wrap',
+      }}
+    >
+      <input
+        type="text"
+        value={slot.startTime}
+        onChange={(e) => onChange({ startTime: e.target.value })}
+        placeholder="9:00"
+        style={{ width: 60 }}
+      />
+      <input
+        type="text"
+        value={slot.endTime}
+        onChange={(e) => onChange({ endTime: e.target.value })}
+        placeholder="10:00"
+        style={{ width: 60 }}
+      />
+      {subjectOptions.length === 0 ? (
+        // No branch/semester picked yet, or nothing in the static
+        // curriculum list for it (e.g. MNC) — fall back to free text
+        // rather than an empty dropdown.
+        <input
+          type="text"
+          value={slot.subjectCode}
+          onChange={(e) => onChange({ subjectCode: e.target.value })}
+          placeholder="CS301"
+          style={{ width: 80 }}
+          title="Set Branch and Semester to get a pick-list here"
+        />
+      ) : (
+        <select
+          value={matchedOption ? matchedOption.code : '__custom__'}
+          onChange={(e) => {
+            if (e.target.value === '__custom__') return;
+            const chosen = subjectOptions.find((o) => o.code === e.target.value);
+            // Both fields land in ONE call — updating them as two
+            // separate calls (subjectCode, then subjectName) each
+            // computed their own copy of the slot from the same
+            // not-yet-updated state, so the second call silently threw
+            // away the first's change. A single combined update can't
+            // do that.
+            onChange(chosen ? { subjectCode: e.target.value, subjectName: chosen.name } : { subjectCode: e.target.value });
+          }}
+          style={{ width: 190 }}
+        >
+          <option value="" disabled>
+            Pick a subject...
+          </option>
+          {subjectOptions.map((o) => (
+            <option key={o.code} value={o.code}>
+              {o.code} — {o.name}
+            </option>
+          ))}
+          <option value="__custom__">Other / elective (type below)</option>
+        </select>
+      )}
+      {subjectOptions.length > 0 && !isKnownCode && (
+        <>
+          <input
+            type="text"
+            value={slot.subjectCode}
+            onChange={(e) => onChange({ subjectCode: e.target.value })}
+            placeholder="Code"
+            style={{ width: 70 }}
+          />
+          <input
+            type="text"
+            value={slot.subjectName}
+            onChange={(e) => onChange({ subjectName: e.target.value })}
+            placeholder="Subject name"
+            style={{ flex: 1, minWidth: 100 }}
+          />
+        </>
+      )}
+      <input
+        type="text"
+        list="faculty-legend-options"
+        value={slot.faculty}
+        onChange={(e) => onChange({ faculty: e.target.value })}
+        placeholder="Faculty (start typing a name)"
+        style={{ width: 140 }}
+      />
+      <input
+        type="text"
+        value={slot.room}
+        onChange={(e) => onChange({ room: e.target.value })}
+        placeholder="Room"
+        style={{ width: 70 }}
+      />
+      <input
+        type="text"
+        value={slot.group ?? ''}
+        onChange={(e) => onChange({ group: e.target.value })}
+        placeholder="Group (opt.)"
+        style={{ width: 90 }}
+      />
+      <button onClick={onRemove} className="button-secondary" style={{ padding: '0.2rem 0.5rem' }}>
+        ✕
+      </button>
+    </div>
+  );
+}
+
+// Rendered once, top-level, so every SlotRow's faculty <input
+// list="faculty-legend-options"> resolves regardless of which editor
+// (single-section or bulk-preview) it's inside.
+function FacultyDatalist() {
+  return (
+    <datalist id="faculty-legend-options">
+      {FACULTY_DATALIST_OPTIONS.map((f) => (
+        <option key={f.initials} value={f.initials}>
+          {f.name}
+        </option>
+      ))}
+    </datalist>
+  );
+}
+
+// The 9 time columns every real IIIT Surat timetable uses (see the aSc
+// exports) — fixed, not typed per class, which is the whole point: a
+// faculty member picks a DAY × COLUMN cell instead of typing "9:00" and
+// "10:00" into two separate free-text boxes, so a mistyped or
+// transposed time can no longer happen at all for anything that fits
+// this standard grid. startTime/endTime here are what actually gets
+// saved on the slot — same "H:MM" shape normalizeTimeCell already
+// produces elsewhere, so a grid-entered class looks identical in
+// Firestore to one that came in through spreadsheet/PDF import.
+const GRID_TIME_COLUMNS: { label: string; header: string; startTime: string; endTime: string }[] = [
+  { label: '1', header: '9-10 AM', startTime: '9:00', endTime: '10:00' },
+  { label: '2', header: '10-11 AM', startTime: '10:00', endTime: '11:00' },
+  { label: '3', header: '11-12', startTime: '11:00', endTime: '12:00' },
+  { label: '4', header: '12-1 PM', startTime: '12:00', endTime: '13:00' },
+  { label: '5', header: '1-2 PM', startTime: '13:00', endTime: '14:00' },
+  { label: '6', header: '2-3 PM', startTime: '14:00', endTime: '15:00' },
+  { label: '7', header: '3-4 PM', startTime: '15:00', endTime: '16:00' },
+  { label: '8', header: '4-5 PM', startTime: '16:00', endTime: '17:00' },
+  { label: '9', header: '5-6 PM', startTime: '17:00', endTime: '18:00' },
+];
+const GRID_DAY_LABELS: Record<string, string> = {
+  Monday: 'Mo',
+  Tuesday: 'Tu',
+  Wednesday: 'We',
+  Thursday: 'Th',
+  Friday: 'Fr',
+};
+
+// "9:00" and "09:00" are the same time but different strings — imported
+// sheets/PDFs and hand-typed times don't reliably agree on padding, so
+// every column match has to go through minutes rather than a straight
+// string compare.
+function timeToMinutes(raw: string): number | null {
+  const match = raw.trim().match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) return null;
+  return parseInt(match[1], 10) * 60 + parseInt(match[2], 10);
+}
+
+// One DAY × COLUMN cell — 0, 1, or 2 classes (2 for a lab split into
+// Group 1 / Group 2, or a Div. 1 / Div. 2 elective split). Each present
+// class is an inline mini-editor (Subject Code dropdown, Faculty
+// autocomplete, Room) with no time fields at all, since the column
+// already fixes those. This is the piece that removes the "typed the
+// wrong time into the wrong day's row" mistake class entirely, not just
+// the subject/faculty typo class SlotRow already handles.
+function GridCell({
+  slots,
+  branch,
+  semester,
+  column,
+  colSpan,
+  maxSpanHours,
+  onUpdateSlot,
+  onAddSlot,
+  onRemoveSlot,
+}: {
+  slots: TimetableSlot[];
+  branch: string;
+  semester: string;
+  column: (typeof GRID_TIME_COLUMNS)[number];
+  colSpan: number;
+  maxSpanHours: number;
+  onUpdateSlot: (slotId: string, changes: Partial<TimetableSlot>) => void;
+  onAddSlot: (group?: string, hours?: number) => void;
+  onRemoveSlot: (slotId: string) => void;
+}) {
+  const subjectOptions = subjectOptionsFor(branch, semester);
+  const startMinutes = timeToMinutes(column.startTime)!;
+
+  const renderMiniEditor = (slot: TimetableSlot) => {
+    const matchedOption = matchCurriculumOption(subjectOptions, slot.subjectCode);
+    const isKnownCode = subjectOptions.length === 0 || !!matchedOption;
+    const endMinutes = timeToMinutes(slot.endTime);
+    // Defaults to 1hr if the slot's endTime is blank/unparseable (a
+    // brand-new slot) rather than crashing on the arithmetic below.
+    const durationHours = endMinutes != null ? Math.max(1, Math.round((endMinutes - startMinutes) / 60)) : 1;
+    return (
+      <div key={slot.id} style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem', marginBottom: '0.3rem' }}>
+        {slots.length > 1 && (
+          <input
+            type="text"
+            value={slot.group ?? ''}
+            onChange={(e) => onUpdateSlot(slot.id, { group: e.target.value })}
+            placeholder="Group 1 / Div. 1"
+            style={{ fontSize: '0.65rem', padding: '0.1rem 0.3rem' }}
+          />
+        )}
+        {subjectOptions.length === 0 ? (
+          <input
+            type="text"
+            value={slot.subjectCode}
+            onChange={(e) => onUpdateSlot(slot.id, { subjectCode: e.target.value })}
+            placeholder="Code"
+            style={{ fontSize: '0.7rem', padding: '0.15rem 0.3rem' }}
+            title="Set Branch and Semester to get a pick-list here"
+          />
+        ) : (
+          <select
+            value={matchedOption ? matchedOption.code : '__custom__'}
+            onChange={(e) => {
+              if (e.target.value === '__custom__') return;
+              const chosen = subjectOptions.find((o) => o.code === e.target.value);
+              // Both fields in ONE call — see SlotRow's identical
+              // comment above for why two separate calls here silently
+              // dropped the subjectCode change.
+              onUpdateSlot(
+                slot.id,
+                chosen ? { subjectCode: e.target.value, subjectName: chosen.name } : { subjectCode: e.target.value },
+              );
+            }}
+            style={{ fontSize: '0.7rem', padding: '0.15rem 0.2rem', width: '100%' }}
+          >
+            <option value="" disabled>
+              Pick…
+            </option>
+            {subjectOptions.map((o) => (
+              <option key={o.code} value={o.code}>
+                {o.code}
+              </option>
+            ))}
+            <option value="__custom__">Other…</option>
+          </select>
+        )}
+        {subjectOptions.length > 0 && !isKnownCode && (
+          <input
+            type="text"
+            value={slot.subjectCode}
+            onChange={(e) => onUpdateSlot(slot.id, { subjectCode: e.target.value })}
+            placeholder="Code"
+            style={{ fontSize: '0.7rem', padding: '0.15rem 0.3rem' }}
+          />
+        )}
+        <input
+          type="text"
+          list="faculty-legend-options"
+          value={slot.faculty}
+          onChange={(e) => onUpdateSlot(slot.id, { faculty: e.target.value })}
+          placeholder="Faculty"
+          style={{ fontSize: '0.7rem', padding: '0.15rem 0.3rem' }}
+        />
+        <input
+          type="text"
+          value={slot.room}
+          onChange={(e) => onUpdateSlot(slot.id, { room: e.target.value })}
+          placeholder="Room"
+          style={{ fontSize: '0.7rem', padding: '0.15rem 0.3rem' }}
+        />
+        <div style={{ display: 'flex', gap: '0.25rem', alignItems: 'center' }}>
+          <label style={{ fontSize: '0.6rem', color: 'var(--ink-soft)' }}>Hrs</label>
+          <input
+            type="number"
+            min={1}
+            max={maxSpanHours}
+            value={durationHours}
+            onChange={(e) => {
+              // A 2-3hr lab (11-2, 1-3, etc.) is just this slot's endTime
+              // pushed out — bumping this to 2 or 3 makes the cell span
+              // that many time columns below, same as the real printed
+              // timetable. Clamped to how many columns are actually left
+              // in the day from this one.
+              const hrs = Math.max(1, Math.min(maxSpanHours, Number(e.target.value) || 1));
+              const newEndMinutes = startMinutes + hrs * 60;
+              const h = Math.floor(newEndMinutes / 60);
+              const m = newEndMinutes % 60;
+              onUpdateSlot(slot.id, { endTime: `${h}:${String(m).padStart(2, '0')}` });
+            }}
+            style={{ width: 34, fontSize: '0.65rem', padding: '0.1rem' }}
+          />
+          <span style={{ fontSize: '0.6rem', color: 'var(--ink-soft)' }}>
+            hr{durationHours > 1 ? 's' : ''}
+            {slots.length > 1 ? ' (match both)' : ''}
+          </span>
+        </div>
+        <button
+          onClick={() => onRemoveSlot(slot.id)}
+          className="button-secondary"
+          style={{ fontSize: '0.65rem', padding: '0.05rem 0.3rem', alignSelf: 'flex-end' }}
+        >
+          ✕
+        </button>
+      </div>
+    );
+  };
+
+  return (
+    <td colSpan={colSpan} style={{ border: '1px solid var(--line)', padding: '0.25rem', verticalAlign: 'top', minWidth: 110 }}>
+      {slots.map(renderMiniEditor)}
+      {slots.length === 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.15rem' }}>
+          <button
+            onClick={() => onAddSlot()}
+            className="button-secondary"
+            style={{ fontSize: '0.7rem', width: '100%', padding: '0.2rem 0' }}
+          >
+            + class (1hr)
+          </button>
+          {maxSpanHours >= 2 && (
+            <button
+              onClick={() => onAddSlot(undefined, 2)}
+              className="button-secondary"
+              style={{ fontSize: '0.7rem', width: '100%', padding: '0.2rem 0' }}
+              title="Every lab is 2hrs — this spans the next column automatically, no need to touch Hrs"
+            >
+              + lab (2hr)
+            </button>
+          )}
+        </div>
+      )}
+      {slots.length === 1 && (
+        <button
+          onClick={() => onAddSlot(slots[0].group ? undefined : 'Group 1')}
+          className="button-secondary"
+          style={{ fontSize: '0.65rem', width: '100%', padding: '0.1rem 0' }}
+          title="Split this slot into two classes sharing the same time (e.g. a lab's Group 1 / Group 2)"
+        >
+          + split
+        </button>
+      )}
+    </td>
+  );
+}
+
+// The full week as a real grid — Days as rows, the 9 fixed slots as
+// columns — instead of a flat "add class" list per day. This is what
+// both the single-section editor and the bulk whole-college preview's
+// per-section editor render now: pick Branch/Semester/Section, the grid
+// appears (blank or pre-filled from what's already saved), edit cells
+// directly, publish.
+//
+// A slot whose time doesn't land on any of the 9 standard columns
+// (a one-off makeup class, or old data saved before this grid existed)
+// is never silently dropped — it's listed below the grid, still fully
+// editable via the same SlotRow used elsewhere, so nothing saved
+// through the old flat editor becomes invisible just because this grid
+// is now the default view.
+function TimetableGrid({
+  days,
+  branch,
+  semester,
+  onChange,
+}: {
+  days: TimetableDay[];
+  branch: string;
+  semester: string;
+  onChange: (nextDays: TimetableDay[]) => void;
+}) {
+  const updateSlot = (dayIndex: number, slotId: string, changes: Partial<TimetableSlot>) => {
+    const next = [...days];
+    next[dayIndex] = {
+      ...next[dayIndex],
+      slots: next[dayIndex].slots.map((s) => (s.id === slotId ? { ...s, ...changes } : s)),
+    };
+    onChange(next);
+  };
+
+  const addSlot = (dayIndex: number, column: (typeof GRID_TIME_COLUMNS)[number], group?: string, hours?: number) => {
+    const next = [...days];
+    // Splitting an existing slot into two groups inherits ITS current
+    // duration (which may already be a 2-3hr lab) rather than resetting
+    // to a fresh 1hr block — a Group 2 added onto an already-widened
+    // Group 1 lab should cover the same span, not just its first hour.
+    const existing = next[dayIndex].slots.filter((s) => timeToMinutes(s.startTime) === timeToMinutes(column.startTime));
+    const startMinutes = timeToMinutes(column.startTime)!;
+    const inheritedEndTime =
+      existing.length > 0
+        ? existing[0].endTime
+        : hours
+          ? (() => {
+              const endMinutes = startMinutes + hours * 60;
+              return `${Math.floor(endMinutes / 60)}:${String(endMinutes % 60).padStart(2, '0')}`;
+            })()
+          : column.endTime;
+    const newSlot: TimetableSlot = {
+      ...emptySlot(),
+      startTime: column.startTime,
+      endTime: inheritedEndTime,
+      ...(group ? { group } : {}),
+    };
+    // Splitting an existing single slot into two also labels the first
+    // one "Group 1" if it wasn't already labeled, so the pair reads
+    // clearly rather than one being blank and the other "Group 1".
+    const updatedSlots = next[dayIndex].slots.map((s) =>
+      group && existing.length === 1 && s.id === existing[0].id && !s.group ? { ...s, group: 'Group 1' } : s,
+    );
+    next[dayIndex] = { ...next[dayIndex], slots: [...updatedSlots, newSlot] };
+    onChange(next);
+  };
+
+  const removeSlot = (dayIndex: number, slotId: string) => {
+    const next = [...days];
+    next[dayIndex] = { ...next[dayIndex], slots: next[dayIndex].slots.filter((s) => s.id !== slotId) };
+    onChange(next);
+  };
+
+  // Slots whose time doesn't match any of the 9 standard columns,
+  // grouped by day index so they can still be edited (not lost) below
+  // the grid.
+  const unmatchedByDay = days.map((d) =>
+    d.slots.filter((s) => !GRID_TIME_COLUMNS.some((c) => timeToMinutes(c.startTime) === timeToMinutes(s.startTime))),
+  );
+  const hasUnmatched = unmatchedByDay.some((s) => s.length > 0);
+
+  // Builds one day's <td> cells left to right. A lab that's been
+  // widened past 1hr (via the "Hrs" control in GridCell) needs a real
+  // HTML colSpan across however many columns it now covers — and every
+  // column it covers must NOT get its own separate <td>, or the row
+  // would render too many cells and the whole table would misalign.
+  // colIndex is advanced by the span every time a cell is placed,
+  // whether that span is 1 (an ordinary class, or an empty "+ class"
+  // column) or more (a real lab).
+  const renderDayCells = (dayData: TimetableDay, dayIndex: number) => {
+    const cells: ReactElement[] = [];
+    let colIndex = 0;
+    while (colIndex < GRID_TIME_COLUMNS.length) {
+      const column = GRID_TIME_COLUMNS[colIndex];
+      const startSlots = dayData.slots.filter((s) => timeToMinutes(s.startTime) === timeToMinutes(column.startTime));
+      const maxSpanHours = GRID_TIME_COLUMNS.length - colIndex;
+      let span = 1;
+      if (startSlots.length > 0) {
+        const startMinutes = timeToMinutes(column.startTime)!;
+        const maxEndMinutes = Math.max(
+          ...startSlots.map((s) => timeToMinutes(s.endTime) ?? timeToMinutes(column.endTime)!),
+        );
+        span = Math.max(1, Math.min(Math.round((maxEndMinutes - startMinutes) / 60), maxSpanHours));
+      }
+      cells.push(
+        <GridCell
+          key={column.label}
+          colSpan={span}
+          maxSpanHours={maxSpanHours}
+          slots={startSlots}
+          branch={branch}
+          semester={semester}
+          column={column}
+          onUpdateSlot={(slotId, changes) => updateSlot(dayIndex, slotId, changes)}
+          onAddSlot={(group, hours) => addSlot(dayIndex, column, group, hours)}
+          onRemoveSlot={(slotId) => removeSlot(dayIndex, slotId)}
+        />,
+      );
+      colIndex += span;
+    }
+    return cells;
+  };
+
+  return (
+    <div>
+      <div style={{ overflowX: 'auto' }}>
+        <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: '0.75rem' }}>
+          <thead>
+            <tr>
+              <th style={{ border: '1px solid var(--line)', padding: '0.25rem', background: 'var(--panel-bg, #f5f5f5)' }} />
+              {GRID_TIME_COLUMNS.map((c) => (
+                <th
+                  key={c.label}
+                  style={{ border: '1px solid var(--line)', padding: '0.25rem', background: 'var(--panel-bg, #f5f5f5)', fontWeight: 600 }}
+                >
+                  {c.header}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {days.map((dayData, dayIndex) => (
+              <tr key={dayData.day}>
+                <th
+                  style={{
+                    border: '1px solid var(--line)',
+                    padding: '0.25rem',
+                    background: 'var(--panel-bg, #f5f5f5)',
+                    fontWeight: 600,
+                  }}
+                >
+                  {GRID_DAY_LABELS[dayData.day] ?? dayData.day}
+                </th>
+                {renderDayCells(dayData, dayIndex)}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <p style={{ fontSize: '0.7rem', color: 'var(--ink-soft)', marginTop: '0.4rem' }}>
+        For a 2-3hr lab, add the class in its FIRST hour column, then bump "Hrs" on that class —
+        it'll widen to cover the right number of columns automatically.
+      </p>
+
+      {hasUnmatched && (
+        <div style={{ marginTop: '1rem', padding: '0.75rem', border: '1px dashed var(--line)', borderRadius: 6 }}>
+          <p style={{ fontSize: '0.75rem', color: 'var(--ink-soft)', marginTop: 0 }}>
+            These classes have a time outside the 9 standard columns above (a makeup class, or data
+            saved before this grid existed) — still saved and editable, just shown separately so the
+            grid above stays a clean weekly view.
+          </p>
+          {days.map((dayData, dayIndex) =>
+            unmatchedByDay[dayIndex].length > 0 ? (
+              <div key={dayData.day} style={{ marginTop: '0.5rem' }}>
+                <strong style={{ fontSize: '0.8rem' }}>{dayData.day}</strong>
+                {unmatchedByDay[dayIndex].map((slot) => (
+                  <SlotRow
+                    key={slot.id}
+                    slot={slot}
+                    branch={branch}
+                    semester={semester}
+                    onChange={(changes) => updateSlot(dayIndex, slot.id, changes)}
+                    onRemove={() => removeSlot(dayIndex, slot.id)}
+                  />
+                ))}
+              </div>
+            ) : null,
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function TimetableEditor() {
@@ -242,6 +852,53 @@ function TimetableEditor() {
   // runs. Independent of the single-section Branch/Semester/Section
   // fields above — a bulk import covers many sections, so it doesn't
   // make sense to gate it on one section being "loaded" first.
+  const downloadTimetableTemplate = () => {
+    const blob = new Blob([WHOLE_COLLEGE_TIMETABLE_TEMPLATE_CSV], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'whole-college-timetable-template.csv';
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  // A grid-shaped sheet, one per section, matching exactly how the
+  // college's own aSc-exported timetable already looks -- easier for
+  // faculty to fill in or edit than the flat row-per-slot CSV above,
+  // since it's the same shape they already read and think in. Built
+  // client-side with the same xlsx library already used to parse
+  // uploads, from real, already-verified rows (ECE Sem1 Section A),
+  // not placeholder text.
+  const downloadGridTemplate = async () => {
+    const XLSX = await import('xlsx');
+    const rows = [
+      ['Day', '09:00 - 10:00AM', '10:00 - 11:00AM', '11:00AM - 12:00PM'],
+      [
+        'Monday',
+        'Group 1\nAS101\nPHY Lab 1\nND\n\nGroup 2\nEC101\nECE Lab 2\nRDM/SRS',
+        'AS102\nCR 6\nPAS F1',
+        '',
+      ],
+      ['Tuesday', 'MS101\nCR 6\nAPS', 'AS102\nCR 6\nPAS F1', 'HS101\nCR 6\nHSS F1'],
+    ];
+    const sheet = XLSX.utils.aoa_to_sheet(rows);
+    sheet['!cols'] = [{ wch: 12 }, { wch: 26 }, { wch: 22 }, { wch: 22 }];
+    const workbook = XLSX.utils.book_new();
+    // The sheet name IS what tells the importer which section this is
+    // -- "SEMESTER <n> <branch> <section>", matched by
+    // detectSectionFromHeaderText. Faculty rename this per section
+    // when they duplicate the sheet for a real upload.
+    XLSX.utils.book_append_sheet(workbook, sheet, 'SEMESTER 1 ECE A');
+    const wbout = XLSX.write(workbook, { type: 'array', bookType: 'xlsx' });
+    const blob = new Blob([wbout], { type: 'application/octet-stream' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'whole-college-timetable-grid-template.xlsx';
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   const handleImportAllFromSpreadsheet = async (file: File) => {
     if (curriculumLoading) {
       setStatus('Still loading curriculum — wait a second and try choosing the file again.');
@@ -290,6 +947,18 @@ function TimetableEditor() {
     setBulkExcelPreview({ ...bulkExcelPreview, groups: nextGroups });
   };
 
+  // Which group (if any) is expanded into the full day/slot editor below
+  // its summary row — only one at a time, so reviewing 11 sections stays
+  // manageable rather than showing every slot of every section at once.
+  const [expandedGroupIndex, setExpandedGroupIndex] = useState<number | null>(null);
+
+  const setBulkGroupDays = (groupIndex: number, nextDays: TimetableDay[]) => {
+    if (!bulkExcelPreview) return;
+    const nextGroups = [...bulkExcelPreview.groups];
+    nextGroups[groupIndex] = { ...nextGroups[groupIndex], days: nextDays };
+    setBulkExcelPreview({ ...bulkExcelPreview, groups: nextGroups });
+  };
+
   const handleConfirmBulkExcelSave = async () => {
     if (!bulkExcelPreview) return;
     const unmatched = bulkExcelPreview.groups.filter((g) => {
@@ -311,6 +980,9 @@ function TimetableEditor() {
     setBulkExcelSaving(true);
     let savedCount = 0;
     try {
+      // Room-name fixes made in Room names are applied on every save, so
+      // a re-imported sheet can't bring a wrong room back.
+      const roomAliases = await loadRoomAliases();
       for (const group of bulkExcelPreview.groups) {
         const id = timetableDocId(group.branch, group.semester, group.section);
         const sortedDays = group.days.map((d) => ({
@@ -323,7 +995,7 @@ function TimetableEditor() {
           branch: group.branch,
           semester: group.semester,
           section: group.section,
-          days: sortedDays,
+          days: cleanDays(sortedDays, roomAliases),
           updatedAt: serverTimestamp(),
         });
         savedCount++;
@@ -464,30 +1136,6 @@ function TimetableEditor() {
     }
   };
 
-  const handleAddSlot = (dayIndex: number) => {
-    if (!days) return;
-    const next = [...days];
-    next[dayIndex] = { ...next[dayIndex], slots: [...next[dayIndex].slots, emptySlot()] };
-    setDays(next);
-  };
-
-  const handleRemoveSlot = (dayIndex: number, slotId: string) => {
-    if (!days) return;
-    const next = [...days];
-    next[dayIndex] = { ...next[dayIndex], slots: next[dayIndex].slots.filter((s) => s.id !== slotId) };
-    setDays(next);
-  };
-
-  const handleSlotChange = (dayIndex: number, slotId: string, field: keyof TimetableSlot, value: string) => {
-    if (!days) return;
-    const next = [...days];
-    next[dayIndex] = {
-      ...next[dayIndex],
-      slots: next[dayIndex].slots.map((s) => (s.id === slotId ? { ...s, [field]: value } : s)),
-    };
-    setDays(next);
-  };
-
   // Sorts each day's slots by start time before saving — the editor lets
   // you add slots in any order, but the mobile app's TimetableScreen
   // renders whatever order they're stored in, so this keeps the display
@@ -519,11 +1167,12 @@ function TimetableEditor() {
           .filter((s) => s.startTime && s.subjectCode) // drop genuinely blank rows
           .sort((a, b) => a.startTime.localeCompare(b.startTime)),
       }));
+      const roomAliases = await loadRoomAliases();
       await setDoc(doc(db, 'timetable', id), {
         branch: branch.trim().toUpperCase(),
         semester: Number(semester),
         section: section.trim(),
-        days: sortedDays,
+        days: cleanDays(sortedDays, roomAliases),
         updatedAt: serverTimestamp(),
       });
       setExisted(true);
@@ -544,6 +1193,7 @@ function TimetableEditor() {
 
   return (
     <div className="card" style={{ width: 760, padding: '2.5rem', margin: '3rem auto' }}>
+      <FacultyDatalist />
       <h1 style={{ fontSize: '1.5rem' }}>Edit Timetable</h1>
       <p style={{ fontSize: '0.85rem', color: 'var(--ink-soft)' }}>
         Load a section's current schedule and edit just what changed — much faster than
@@ -558,19 +1208,27 @@ function TimetableEditor() {
         </p>
 
         <label>
-          Whole-college Excel/CSV (automatic — needs Branch, Semester, Section, Day, Start Time, End
-          Time columns on every row){curriculumLoading ? ' — loading curriculum, one moment...' : ''}
+          Whole-college Excel/CSV — either a grid sheet per section (matching your existing timetable
+          layout, recommended) or one row per class{curriculumLoading ? ' — loading curriculum, one moment...' : ''}
         </label>
-        <input
-          type="file"
-          accept=".xlsx,.xls,.csv"
-          disabled={bulkExcelImporting || curriculumLoading}
-          onChange={(e) => {
-            const file = e.target.files?.[0];
-            if (file) handleImportAllFromSpreadsheet(file);
-            e.target.value = '';
-          }}
-        />
+        <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-start', flexWrap: 'wrap' }}>
+          <input
+            type="file"
+            accept=".xlsx,.xls,.csv"
+            disabled={bulkExcelImporting || curriculumLoading}
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) handleImportAllFromSpreadsheet(file);
+              e.target.value = '';
+            }}
+          />
+          <button type="button" onClick={downloadGridTemplate}>
+            Download grid template
+          </button>
+          <button type="button" onClick={downloadTimetableTemplate}>
+            Download row template
+          </button>
+        </div>
 
         {bulkExcelPreview && (
           <div style={{ marginTop: '1rem' }}>
@@ -589,9 +1247,10 @@ function TimetableEditor() {
                   new Set(rosterSections.filter((r) => r.branch === g.branch).map((r) => r.section)),
                 );
                 const hasMatch = realSectionsForBranch.includes(g.section);
+                const isExpanded = expandedGroupIndex === i;
                 return (
+                  <div key={i}>
                   <div
-                    key={i}
                     style={{
                       display: 'flex',
                       gap: '0.5rem',
@@ -632,6 +1291,36 @@ function TimetableEditor() {
                           ⚠ pick the real section on the left before saving
                         </span>
                       ))}
+                    <button
+                      type="button"
+                      className="button-secondary"
+                      style={{ marginLeft: 'auto', fontSize: '0.8rem' }}
+                      onClick={() => setExpandedGroupIndex(isExpanded ? null : i)}
+                    >
+                      {isExpanded ? 'Done editing' : 'Edit classes'}
+                    </button>
+                  </div>
+                  {isExpanded && (
+                    <div
+                      style={{
+                        padding: '0.75rem 0.5rem 0.5rem 1.5rem',
+                        borderLeft: '3px solid var(--line)',
+                        marginTop: '0.25rem',
+                        marginBottom: '0.5rem',
+                      }}
+                    >
+                      <p style={{ fontSize: '0.75rem', color: 'var(--ink-soft)', marginTop: 0 }}>
+                        Same grid as the single-section editor below — fix anything the source
+                        sheet had wrong before saving.
+                      </p>
+                      <TimetableGrid
+                        days={g.days}
+                        branch={g.branch}
+                        semester={String(g.semester)}
+                        onChange={(nextDays) => setBulkGroupDays(i, nextDays)}
+                      />
+                    </div>
+                  )}
                   </div>
                 );
               })}
@@ -757,88 +1446,10 @@ function TimetableEditor() {
 
       {days && (
         <>
-          {days.map((dayData, dayIndex) => (
-            <div key={dayData.day} style={{ marginTop: '1.5rem' }}>
-              <h3 style={{ fontSize: '1rem', marginBottom: '0.5rem' }}>{dayData.day}</h3>
-
-              {dayData.slots.map((slot) => (
-                <div
-                  key={slot.id}
-                  style={{
-                    display: 'flex',
-                    gap: '0.4rem',
-                    alignItems: 'center',
-                    marginBottom: '0.4rem',
-                    fontSize: '0.8rem',
-                  }}
-                >
-                  <input
-                    type="text"
-                    value={slot.startTime}
-                    onChange={(e) => handleSlotChange(dayIndex, slot.id, 'startTime', e.target.value)}
-                    placeholder="9:00"
-                    style={{ width: 60 }}
-                  />
-                  <input
-                    type="text"
-                    value={slot.endTime}
-                    onChange={(e) => handleSlotChange(dayIndex, slot.id, 'endTime', e.target.value)}
-                    placeholder="10:00"
-                    style={{ width: 60 }}
-                  />
-                  <input
-                    type="text"
-                    value={slot.subjectCode}
-                    onChange={(e) => handleSlotChange(dayIndex, slot.id, 'subjectCode', e.target.value)}
-                    placeholder="CS301"
-                    style={{ width: 80 }}
-                  />
-                  <input
-                    type="text"
-                    value={slot.subjectName}
-                    onChange={(e) => handleSlotChange(dayIndex, slot.id, 'subjectName', e.target.value)}
-                    placeholder="Subject name"
-                    style={{ flex: 1 }}
-                  />
-                  <input
-                    type="text"
-                    value={slot.faculty}
-                    onChange={(e) => handleSlotChange(dayIndex, slot.id, 'faculty', e.target.value)}
-                    placeholder="Faculty"
-                    style={{ width: 70 }}
-                  />
-                  <input
-                    type="text"
-                    value={slot.room}
-                    onChange={(e) => handleSlotChange(dayIndex, slot.id, 'room', e.target.value)}
-                    placeholder="Room"
-                    style={{ width: 70 }}
-                  />
-                  <input
-                    type="text"
-                    value={slot.group ?? ''}
-                    onChange={(e) => handleSlotChange(dayIndex, slot.id, 'group', e.target.value)}
-                    placeholder="Group (opt.)"
-                    style={{ width: 90 }}
-                  />
-                  <button
-                    onClick={() => handleRemoveSlot(dayIndex, slot.id)}
-                    className="button-secondary"
-                    style={{ padding: '0.2rem 0.5rem' }}
-                  >
-                    ✕
-                  </button>
-                </div>
-              ))}
-
-              <button onClick={() => handleAddSlot(dayIndex)} className="button-secondary" style={{ fontSize: '0.8rem' }}>
-                + Add class
-              </button>
-            </div>
-          ))}
+          <TimetableGrid days={days} branch={branch} semester={semester} onChange={setDays} />
 
           <button onClick={handleSave} disabled={saving} style={{ width: '100%', marginTop: '1.5rem' }}>
-            {saving ? 'Saving...' : 'Save Timetable'}
+            {saving ? 'Publishing...' : 'Publish Timetable'}
           </button>
         </>
       )}
