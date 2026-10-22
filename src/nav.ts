@@ -1,6 +1,5 @@
-// Every page of the portal, grouped the same way the app's Home groups
-// features — one colour per group, used in the sidebar, on the Home
-// cards and in the breadcrumb, so people learn where things live.
+
+
 import type { IconName } from './icons';
 
 export type Tab =
@@ -43,8 +42,6 @@ export const toneVars = (tone: Tone) => ({
   color: `var(--tone-${tone}-fg)`,
 });
 
-// The dynamic imports here are the same ones App's lazy() calls use, so
-// hovering a group warms its pages before the click lands.
 export const NAV: NavGroup[] = [
   {
     id: 'teaching',

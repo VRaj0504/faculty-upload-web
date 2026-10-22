@@ -3,7 +3,7 @@ import { collection, getDocs, doc, setDoc, deleteDoc } from 'firebase/firestore'
 import { db } from './firebaseConfig';
 
 type CurriculumRow = {
-  id: string; // "{branch}_{semester}_{code}"
+  id: string;
   branch: string;
   semester: number;
   code: string;
@@ -23,11 +23,6 @@ function CurriculumBrowser() {
   const [branchFilter, setBranchFilter] = useState('All');
   const [semesterFilter, setSemesterFilter] = useState('All');
 
-  // name and credits are editable inline — branch/semester/code together
-  // form this doc's Firestore ID (see docIdFor above), so changing any of
-  // them would mean creating a new doc and deleting the old one, not a
-  // normal field update. If one of those needs correcting, delete the
-  // row and re-add it with the right key instead.
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const [editCredits, setEditCredits] = useState(0);
@@ -93,10 +88,7 @@ function CurriculumBrowser() {
     }
     setBusyId(row.id);
     try {
-      // merge: true — a plain setDoc replaces the WHOLE document, which
-      // would silently wipe any field this form doesn't know about.
-      // This bit us for real once already: credits went missing this
-      // exact way before this field existed here at all.
+
       await setDoc(
         doc(db, 'curriculum', row.id),
         {

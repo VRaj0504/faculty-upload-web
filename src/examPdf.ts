@@ -1,7 +1,7 @@
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { auth, storage } from './firebaseConfig';
 
-export const EXAM_SHEET_MAX_BYTES = 6.5 * 1024 * 1024; // callable request bodies cap at 10 MB, base64 adds ~33%
+export const EXAM_SHEET_MAX_BYTES = 6.5 * 1024 * 1024;
 
 export function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -21,9 +21,6 @@ export function guessMimeType(file: File): string {
   return '';
 }
 
-// Stores the official date sheet so students can open the original from
-// the app. The path embeds a timestamp, so a given URL's content never
-// changes — same convention as resource uploads.
 export async function uploadExamSheetPdf(file: File): Promise<{ url: string; name: string }> {
   const uid = auth.currentUser?.uid ?? 'web';
   const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');

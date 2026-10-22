@@ -1,13 +1,10 @@
-// One entry per fixed-name course. Electives (e.g. "Elective - 2") are
-// deliberately left out since their actual subject name varies per
-// student and isn't fixed in the curriculum sheet.
+
+
 export type CurriculumSubject = {
   code: string;
   name: string;
 };
 
-// Record<number, ...> here means "an object where every key is a semester
-// number (1-8), and every value is an array of that semester's subjects."
 export type BranchCurriculum = Record<number, CurriculumSubject[]>;
 
 export const curriculum: Record<'CSE' | 'ECE' | 'MNC', BranchCurriculum> = {
@@ -184,8 +181,7 @@ export const curriculum: Record<'CSE' | 'ECE' | 'MNC', BranchCurriculum> = {
     ],
   },
 };
-// A semester's fixed subjects for a branch — what every subject pick-list in
-// the portal offers, so codes and names are chosen, never typed.
+
 export function subjectsFor(branch: string, semester: number): CurriculumSubject[] {
   return curriculum[String(branch).toUpperCase() as keyof typeof curriculum]?.[semester] ?? [];
 }

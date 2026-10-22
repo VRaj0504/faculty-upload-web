@@ -5,12 +5,6 @@ import { Icon } from './icons';
 import { NAV } from './nav';
 import { SUPPORT } from './support';
 
-// A Help button on every screen. Faculty pick what went wrong and where
-// (dropdowns, not free text), add a line of detail, and it lands in the
-// `supportRequests` collection — admins see the open ones right here. They
-// can also email (or WhatsApp) support directly, with the page and their
-// details already filled in.
-
 const CATEGORIES = [
   'Something is not working / shows an error',
   'Wrong data (timetable, students, subjects, rooms)',
@@ -64,10 +58,9 @@ export default function HelpButton({
     return () => window.removeEventListener('keydown', onKey);
   }, [open]);
 
-  // Admins see open requests from everyone.
   useEffect(() => {
     if (!open || !isAdmin) return;
-    // One equality filter only (no composite index needed); newest first is sorted here.
+
     const q = query(collection(db, 'supportRequests'), where('status', '==', 'open'));
     return onSnapshot(
       q,

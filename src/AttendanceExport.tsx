@@ -20,10 +20,6 @@ export type Prepared = {
   excusals: Awaited<ReturnType<typeof loadApprovedExcusals>>;
 };
 
-// Collects everything for one class + semester (+ optionally one subject).
-// A session belongs to the semester if it was saved with that semester, or
-// (older records without one) if its subject is in that semester's
-// curriculum, or its date falls inside the semester.
 export async function prepare(ctx: PickerState, only: SubjectOption | null): Promise<Prepared> {
   const cls = ctx.cls!;
   const batch = ctx.batch!;
@@ -39,7 +35,7 @@ export async function prepare(ctx: PickerState, only: SubjectOption | null): Pro
   const docs = all.filter(inSem);
 
   const byCode = new Map<string, ExportSubject>();
-  // Curriculum order first (so subjects with no classes yet still appear as "0 held"), then anything else found.
+
   const base = only ? [only] : curriculum;
   for (const s of base) byCode.set(normCode(s.code), { code: s.code, name: s.name, sessions: [] });
   for (const d of docs) {

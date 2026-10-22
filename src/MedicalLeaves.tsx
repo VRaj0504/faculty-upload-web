@@ -13,15 +13,6 @@ import {
 } from 'firebase/firestore';
 import { auth, db } from './firebaseConfig';
 
-// Medical leave desk — same data and same rules as the mobile app's
-// LeaveRequestsScreen.tsx / leaveService.ts, so acting here or in the app
-// is identical (and triggers the same medicalLeaveWorkflow notifications).
-//
-//   student → Doctor (step 1) → HOD of the student's branch (step 2)
-//           → each teacher whose class was missed confirms (step 3) → done
-//
-// Each section only appears for someone who has work in it.
-
 type Stage = 'doctor' | 'hod' | 'teachers' | 'done' | 'rejected';
 type Decision = { decision: 'approved' | 'rejected'; remark: string | null; by: string; byName: string };
 
@@ -89,8 +80,6 @@ export default function MedicalLeaves() {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState('');
 
-  // The rules match on the email stored on the users/{uid} profile, so
-  // that's the email used here too (not whatever was typed at login).
   useEffect(() => {
     const u = auth.currentUser;
     if (!u) return;

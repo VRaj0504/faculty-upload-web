@@ -2,11 +2,6 @@ import { useEffect, useRef, useState } from 'react';
 import { collection, onSnapshot, query, where, type Timestamp } from 'firebase/firestore';
 import { db } from './firebaseConfig';
 
-// Live list of SOS alerts still needing attention (raised from the student
-// app). Only the doctor, wardens (config/sos) and admins may read them —
-// for anyone else the rules refuse the query and this returns null, so the
-// board and banner simply stay hidden.
-
 export type SosAlert = {
   id: string;
   studentUid: string;
@@ -25,8 +20,6 @@ export type SosAlert = {
   smsError?: string | null;
 };
 
-// A short two-tone beep when a NEW alert arrives (browsers may block sound
-// until the page has been clicked once — the banner still shows).
 function beep() {
   try {
     const Ctx = (window as any).AudioContext || (window as any).webkitAudioContext;

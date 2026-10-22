@@ -8,7 +8,6 @@ import { COURSE_CREDITS } from './curriculumCredits';
 import SegmentedControl from './SegmentedControl';
 import MarksTable, { type TableMark } from './MarksTable';
 
-// Always offered, even before any student of that branch is in the roster.
 const ALL_BRANCHES = ['CSE', 'ECE', 'MNC'];
 
 type RosterEntry = {
@@ -76,20 +75,14 @@ function AssignGrades() {
   const [status, setStatus] = useState('');
   const [marks, setMarks] = useState<StudentMark[] | null>(null);
   const [absentTokens, setAbsentTokens] = useState<string[]>([]);
-  // Mean/median/etc. used to compute and display the instant marks
-  // were parsed — faculty had no say in whether they saw it before
-  // deciding anything themselves. Now it's an explicit reveal: nothing
-  // shows until this is true, and it resets to false any time the
-  // underlying marks change (a new upload, or picking a different
-  // class/subject) so a stale "revealed" state from a previous sheet
-  // can't carry over and look like it belongs to the new one.
+
   const [statsRevealed, setStatsRevealed] = useState(false);
 
   const [cutoffs, setCutoffs] = useState<Record<GradeKey, string>>({
     AA: '', AB: '', BB: '', BC: '', CC: '', CD: '', DD: '',
   });
   const [saving, setSaving] = useState(false);
-  // Per-student grade chosen by hand in the table, overriding the cutoffs.
+
   const [overrides, setOverrides] = useState<Record<string, string>>({});
 
   useEffect(() => {
@@ -97,7 +90,7 @@ function AssignGrades() {
       .then(([rosterSnap, curriculumSnap]) => {
         setRoster(
           rosterSnap.docs
-            .filter((d) => d.data().reviewer !== true) // app-store reviewer account
+            .filter((d) => d.data().reviewer !== true)
             .map((d) => ({ regNo: d.id, ...(d.data() as Omit<RosterEntry, 'regNo'>) })),
         );
         setCurriculum(curriculumSnap.docs.map((d) => d.data() as CurriculumEntry));
@@ -120,9 +113,7 @@ function AssignGrades() {
       ).sort(),
     [roster, admissionYear, branch],
   );
-  // The Firestore curriculum wins; where it has nothing for a branch +
-  // semester (a new branch like MNC), the built-in curriculum fills in, with
-  // credits read from the curriculum PDFs.
+
   const fullCurriculum = useMemo(() => {
     const have = new Set(curriculum.map((c) => `${c.branch}|${c.semester}`));
     const extra: CurriculumEntry[] = [];
@@ -144,8 +135,6 @@ function AssignGrades() {
   );
   const selectedSubject = subjects.find((s) => s.code === subjectCode);
 
-  // The students of the picked class — used both to pre-fill the marks
-  // template and to check an uploaded sheet against the real class.
   const classRoster = useMemo(
     () =>
       roster.filter(
@@ -156,7 +145,7 @@ function AssignGrades() {
       ),
     [roster, admissionYear, branch, section],
   );
-  // Stable identity, so the marks table doesn't see "new students" on every render.
+
   const tableStudents = useMemo(
     () => classRoster.map((r) => ({ regNo: r.regNo.toUpperCase(), name: r.name })),
     [classRoster],
@@ -199,15 +188,11 @@ function AssignGrades() {
       const buffer = await file.arrayBuffer();
       const workbook = XLSX.read(buffer, { type: 'array' });
 
-      // Sheets that actually have the Enrollment No / Name / Total headings.
-      // The portal's own template has a second "How to fill" sheet — that
-      // one (and any other notes sheet) is skipped without asking.
       const marksSheets = workbook.SheetNames.filter((name: string) => {
         const rows: any[][] = XLSX.utils.sheet_to_json(workbook.Sheets[name], { header: 1 });
         return rows.slice(0, 10).some((row) => {
           const cells = Array.from({ length: row?.length ?? 0 }, (_, i) => normalizeHeader(String(row[i] ?? '')));
-          // Three DIFFERENT cells — a notes line mentioning all three words
-          // in one sentence isn't a heading row.
+
           const r = cells.findIndex((h) => headerMatchesField(h, HEADER_ALIASES.enrollmentNumber));
           const n = cells.findIndex((h, i) => i !== r && headerMatchesField(h, HEADER_ALIASES.name));
           const t = cells.findIndex((h, i) => i !== r && i !== n && headerMatchesField(h, HEADER_ALIASES.total));
@@ -220,14 +205,7 @@ function AssignGrades() {
       }
 
       if (workbook.SheetNames.length > 1) {
-        // Several marksheets come as one workbook with a separate sheet
-        // per section (e.g. "ECE" / "CSE-1" / "CSE-2") rather than one
-        // flat sheet — silently reading SheetNames[0] regardless of
-        // which Branch/Section was picked above would grade the WRONG
-        // students under the right section, with no error to catch it.
-        // Whoever's uploading knows their own sheet-naming convention;
-        // guessing at it here is exactly the kind of silent mismatch
-        // that shouldn't be automated.
+
         setPendingWorkbook(workbook);
         setPendingSheetNames(workbook.SheetNames);
         setStatus(`This file has ${workbook.SheetNames.length} sheets — pick which one is ${branch} ${section} below.`);
@@ -240,8 +218,6 @@ function AssignGrades() {
     }
   };
 
-  // Marks typed into the on-page table feed the same grading below as an
-  // uploaded sheet does — live, after every edit.
   const onTableMarks = (list: TableMark[] | null, absent: string[]) => {
     setMarks(list);
     setAbsentTokens(absent);
@@ -273,13 +249,7 @@ function AssignGrades() {
     let totalCol = -1;
     for (let i = 0; i < Math.min(rows.length, 10); i++) {
       const candidate = rows[i].map((h) => normalizeHeader(String(h ?? '')));
-      // A row with genuinely blank cells (e.g. spacer columns) comes back
-      // from the xlsx library as a sparse array with real gaps, not
-      // explicit nulls — .map() above silently skips those gaps, but
-      // .findIndex() below does NOT, and hands the gap through as
-      // undefined, which then crashes calling .includes() on it. Filling
-      // every index explicitly closes the gaps so findIndex always sees
-      // a real (possibly empty) string.
+
       const filled = Array.from({ length: candidate.length }, (_, idx) => candidate[idx] ?? '');
       const rCol = filled.findIndex((h) => headerMatchesField(h, HEADER_ALIASES.enrollmentNumber));
       const nCol = filled.findIndex((h) => headerMatchesField(h, HEADER_ALIASES.name));
@@ -321,11 +291,6 @@ function AssignGrades() {
       return;
     }
 
-    // Check the sheet against the real class: a row whose Enrollment No
-    // isn't in this class (a typo, or the wrong section's sheet) is left
-    // out rather than writing a grade onto a stranger's record; students
-    // of the class missing from the sheet are listed so nobody is silently
-    // left without a grade.
     const inClass = new Set(classRoster.map((r) => r.regNo.toUpperCase()));
     const known = classRoster.length ? parsed.filter((m) => inClass.has(m.regNo)) : parsed;
     const strangers = classRoster.length ? parsed.filter((m) => !inClass.has(m.regNo)) : [];
@@ -351,15 +316,10 @@ function AssignGrades() {
 
   const validMarks = useMemo(() => (marks ?? []).filter((m) => m.total !== null).map((m) => m.total as number), [marks]);
 
-  // Any change to the parsed marks — a fresh upload, or switching
-  // class/subject and clearing the sheet — un-reveals the stats.
-  // Otherwise a "revealed" state from the PREVIOUS sheet could stick
-  // around and silently look like it describes the new one.
   useEffect(() => {
     if (mode === 'excel') setStatsRevealed(false);
   }, [marks, mode]);
 
-  // The cutoffs and any hand-picked grades are remembered per class + subject.
   const gradeDraftKey = `gradeDraft:${admissionYear}|${branch}|${section}|${subjectCode}`;
   const [gradeDraftLoaded, setGradeDraftLoaded] = useState('');
   useEffect(() => {
@@ -400,7 +360,7 @@ function AssignGrades() {
     () => GRADES.map((g) => ({ grade: g, min: parseFloat(cutoffs[g]) })).filter((c) => !isNaN(c.min)).sort((a, b) => b.min - a.min),
     [cutoffs],
   );
-  // Grade from the cutoffs alone; null when no cutoff has been typed yet.
+
   const gradeFor = (total: number | null): string | null => {
     if (total === null) return numericCutoffs.length ? 'FF' : null;
     if (!numericCutoffs.length) return null;
@@ -435,10 +395,6 @@ function AssignGrades() {
       const enteredByName = auth.currentUser?.email ?? 'Web Portal';
       const sectionValue = section === '(no section)' ? null : section;
 
-      // One atomic batch per chunk (Firestore allows 500 writes per batch;
-      // 400 leaves headroom). A rejected write — e.g. a grade another
-      // faculty member already owns — fails its whole chunk instead of
-      // leaving a half-published class.
       const CHUNK = 400;
       for (let i = 0; i < marks.length; i += CHUNK) {
         const batch = writeBatch(db);

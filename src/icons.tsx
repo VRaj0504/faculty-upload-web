@@ -1,5 +1,5 @@
-// Small inline stroke icons (24×24, currentColor) — no icon library, so
-// nothing extra to install or download.
+
+
 import type { ReactNode } from 'react';
 
 const paths = {

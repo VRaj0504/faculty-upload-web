@@ -16,16 +16,13 @@ export type AttendanceSelection = {
   classKey: string;
   semester: number | null;
   subject: SubjectOption | null;
-  specialization: string; // '' = everyone in the class
+  specialization: string;
 };
 
 const EMPTY: AttendanceSelection = { batchKey: '', classKey: '', semester: null, subject: null, specialization: '' };
 
-// Remembered while the portal is open, so switching between Mark / Upload /
-// Download keeps the class you picked.
 let remembered: AttendanceSelection = EMPTY;
 
-// Roster + holidays are loaded once per page visit and shared by all tabs.
 let cache: Promise<{ roster: RosterEntry[]; holidays: Map<string, string> }> | null = null;
 export function loadAttendanceBasics() {
   if (!cache) {
@@ -43,7 +40,7 @@ export type PickerState = {
   semester: number | null;
   subject: SubjectOption | null;
   specialization: string;
-  // Students this session is for (the class, narrowed to a specialization if one is picked).
+
   students: RosterEntry[];
 };
 
@@ -51,7 +48,7 @@ export default function AttendanceClassPicker({
   subjectMode,
   onChange,
 }: {
-  // 'required' — one subject must be chosen; 'optional' — "All subjects" allowed (export).
+
   subjectMode: 'required' | 'optional';
   onChange: (s: PickerState | null) => void;
 }) {
@@ -72,7 +69,6 @@ export default function AttendanceClassPicker({
   const classes = useMemo(() => (data && batch ? deriveClasses(data.roster, batch) : []), [data, batch]);
   const cls = classes.find((c) => c.key === sel.classKey) ?? null;
 
-  // A remembered choice that no longer exists (roster changed) is dropped.
   useEffect(() => {
     if (!data) return;
     if (sel.batchKey && !batch) setSel(EMPTY);
@@ -94,7 +90,6 @@ export default function AttendanceClassPicker({
     };
   }, [branchesKey, sel.semester, cls]);
 
-  // A typed (elective) subject that isn't in the list keeps the text boxes open.
   useEffect(() => {
     if (subjects && sel.subject && !subjects.some((s) => s.code === sel.subject!.code)) setTyping(true);
   }, [subjects, sel.subject]);

@@ -8,11 +8,6 @@ import { guessMimeType, uploadExamSheetPdf } from './examPdf';
 const SEMESTERS = [1, 2, 3, 4, 5, 6, 7, 8];
 const MAX_BYTES = 15 * 1024 * 1024;
 
-// The simple way: attach the date sheet exactly as issued. Nothing is read
-// or converted — students open / download the file from the Exam Schedule
-// screen in the app. One file can be attached to several semesters at once
-// (the college PDF usually covers all of them). Rows already typed for a
-// class are kept untouched.
 function ExamPdfAttach() {
   const [branch, setBranch] = useState('');
   const [semesters, setSemesters] = useState<number[]>([]);
@@ -57,8 +52,7 @@ function ExamPdfAttach() {
     setStatus('Uploading…');
     try {
       const pdf = await uploadExamSheetPdf(file);
-      // Branch by branch, in order (MNC first — see branchesOf); the
-      // semesters of one branch can go together.
+
       for (const b of targets) {
         await Promise.all(
           semesters.map(async (s) => {
@@ -71,8 +65,7 @@ function ExamPdfAttach() {
                 semester: s,
                 examType,
                 examTypeLabel: examLabel,
-                // A brand-new sheet has no rows (the rules need the field);
-                // an existing one keeps whatever rows it already has.
+
                 ...(snap.exists() ? {} : { entries: [] }),
                 sourcePdfUrl: pdf.url,
                 sourcePdfName: pdf.name,

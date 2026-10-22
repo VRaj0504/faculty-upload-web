@@ -1,18 +1,10 @@
-// Real .xlsx templates (not CSV) for every "upload a sheet" screen, so
-// faculty start from the exact layout the portal reads. Each template has
-// the data sheet FIRST (that's the one the portal reads) and a "How to
-// fill" sheet after it with the rules, so nobody has to guess.
-//
-// Everything is built in the browser with the same xlsx library the
-// portal already uses to read sheets — nothing new to install.
+
+
 import { curriculum } from './curriculum';
 import { EXAM_TYPES, branchesOf } from './examSheetParser';
 
 type Cell = string | number | null;
-// textCols: columns formatted as Text for the first `textRows` data rows,
-// so Excel keeps what's typed exactly — "03/04/2026" stays 3 April instead
-// of an Excel on US settings turning it into 4 March, and "10:00" stays
-// 10:00. The portal reads both text and real Excel dates/times anyway.
+
 type SheetSpec = { name: string; rows: Cell[][]; widths?: number[]; textCols?: number[]; textFromRow?: number; textRows?: number };
 
 const safeSheetName = (s: string) => s.replace(/[\\/?*[\]:]/g, ' ').slice(0, 31).trim() || 'Sheet1';
@@ -30,7 +22,7 @@ export async function downloadXlsx(filename: string, sheets: SheetSpec[]) {
         for (const c of s.textCols) {
           const addr = XLSX.utils.encode_cell({ r, c });
           const cell = ws[addr] ?? { t: 's', v: '' };
-          if (typeof cell.v === 'number') continue; // a real number someone meant
+          if (typeof cell.v === 'number') continue;
           cell.t = 's';
           cell.v = cell.v == null ? '' : String(cell.v);
           cell.z = '@';
@@ -53,9 +45,6 @@ const howTo = (title: string, lines: string[]): SheetSpec => ({
   widths: [110],
 });
 
-// ---------------------------------------------------------------------------
-// Assign grades — one sheet per class, pre-filled with that class's roster.
-// ---------------------------------------------------------------------------
 export const GRADE_HEADERS = ['Enrollment No', 'Name', 'Total'] as const;
 
 export function gradesTemplate(opts: {
@@ -67,7 +56,7 @@ export function gradesTemplate(opts: {
   subjectName: string;
 }) {
   const sec = opts.section && opts.section !== '(no section)' ? opts.section : '';
-  // Sections are stored as "A" or as "CSE C" — don't print "CSE CSE C".
+
   const cls = !sec ? opts.branch : sec.toUpperCase().startsWith(opts.branch.toUpperCase()) ? sec : `${opts.branch} ${sec}`;
   const sorted = [...opts.students].sort((a, b) => a.regNo.localeCompare(b.regNo, undefined, { numeric: true }));
   return downloadXlsx(`marks-${opts.subjectCode}-${cls.replace(/\s+/g, '')}-${opts.admissionYear}.xlsx`, [
@@ -94,9 +83,6 @@ export function gradesTemplate(opts: {
   ]);
 }
 
-// ---------------------------------------------------------------------------
-// Exam date sheet — one class
-// ---------------------------------------------------------------------------
 export const EXAM_HEADERS = ['Date', 'Start Time', 'End Time', 'Subject Code', 'Subject Name', 'Venue'] as const;
 
 function subjectsFor(branch: string, semester: number) {
@@ -142,9 +128,6 @@ export function examClassTemplate(opts: { branch: string; semester: number; exam
   ]);
 }
 
-// ---------------------------------------------------------------------------
-// Exam date sheet — whole college
-// ---------------------------------------------------------------------------
 export const WHOLE_COLLEGE_HEADERS = ['Branch', 'Semester', 'Exam Type', ...EXAM_HEADERS] as const;
 
 export function examWholeCollegeTemplate() {
@@ -183,16 +166,13 @@ export function examWholeCollegeTemplate() {
   ]);
 }
 
-// Read whichever sheet in a workbook actually has the expected layout —
-// so a template where someone moved "How to fill" first still works.
 export async function readSheetRows<T>(
   file: File,
   parse: (rows: unknown[][]) => T | { error: string },
 ): Promise<{ result: T; sheetName: string } | { error: string }> {
   const XLSX = await import('xlsx');
   const isCsv = /\.csv$/i.test(file.name);
-  // CSV: raw:true keeps "12/11/2026" as the literal text instead of
-  // letting the library guess a US-style month/day date out of it.
+
   const wb = isCsv ? XLSX.read(await file.text(), { type: 'string', raw: true }) : XLSX.read(await file.arrayBuffer(), { type: 'array' });
   let firstError = '';
   for (const name of wb.SheetNames) {

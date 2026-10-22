@@ -14,11 +14,6 @@ import {
 } from 'firebase/firestore';
 import { auth, db } from './firebaseConfig';
 
-// The app's Notices tab (Academic / Placement / Event / General), posted
-// from the portal. Same `notices` collection and field names as the mobile
-// app's noticesService.ts, so the existing sendNoticePush function sends the
-// push notification either way. Class targeting is picked from the live
-// roster (dropdowns, never typed).
 type Category = 'Academic' | 'Placement' | 'Event' | 'General';
 const CATEGORIES: Category[] = ['Academic', 'Placement', 'Event', 'General'];
 
@@ -114,7 +109,6 @@ function timeAgo(ts: Timestamp | null): string {
   return `${Math.floor(hrs / 24)}d ago`;
 }
 
-// Only http(s) links, like the app's safeLink.
 function cleanLink(raw: string): string | null | 'bad' {
   const t = raw.trim();
   if (!t) return null;
@@ -175,8 +169,6 @@ export default function Notices() {
     if (audience === 'class' && cls && cls.specializations.length > 0 && !spec)
       return setError(`${cls.label} has more than one specialization — choose one, or "All".`);
 
-    // One notice per branch+section the audience covers (a class like CSE D
-    // holds more than one branch). "Everyone" is a single notice.
     let targets: { branch: string | null; section: string | null; year: number | null }[];
     if (audience === 'everyone') targets = [{ branch: null, section: null, year: null }];
     else if (audience === 'batch') {

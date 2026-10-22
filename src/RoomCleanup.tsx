@@ -28,25 +28,19 @@ type TimetableDoc = { branch: string; semester: number; section: string; days: T
 type Use = { cls: string; day: string; time: string; subject: string; faculty: string };
 type Room = {
   key: string;
-  name: string; // most-used spelling
+  name: string;
   spellings: string[];
   count: number;
   uses: Use[];
 };
 type Suggestion = { from: Room; to: string; why: string };
 
-// Words that are never a room on their own: placeholders people type.
 const PLACEHOLDERS = new Set(['-', '--', 'NA', 'N/A', 'NIL', 'TBA', 'TBD', 'ROOM', '?', 'X', '0']);
 const letters = (w: string) => w.toUpperCase().replace(/[^A-Z]/g, '');
-// Legend keys are written "D.N", "K.D.", "RRP" — compare letters only.
+
 const LEGEND_BY_LETTERS = new Map(Object.entries(FACULTY_LEGEND).map(([k, v]) => [letters(k), v]));
 const isInitials = (w: string) => !/\d/.test(w) && LEGEND_BY_LETTERS.has(letters(w));
 
-// Every distinct ROOM used by any timetable, with every class using it.
-// A slot naming two rooms ("CR 1 / CR 2") counts once for each, and
-// spellings that differ only by case/spaces/hyphens are one room — the
-// same rules the app's Free rooms screen uses, so what you see here is
-// exactly what students see there.
 function collectRooms(docs: { id: string; data: TimetableDoc }[]): Room[] {
   const byKey = new Map<string, { spellings: Map<string, number>; uses: Use[] }>();
   for (const { data } of docs) {
@@ -71,8 +65,7 @@ function collectRooms(docs: { id: string; data: TimetableDoc }[]): Room[] {
     }
   }
   return Array.from(byKey, ([key, e]) => {
-    // Show the tidiest spelling: "CR 1" over "CR1"/"cr-1" (capitals, a
-    // space before the number), then whichever is used most.
+
     const tidy = (s: string) => (/[A-Za-z] \d/.test(s) ? 2 : 0) + (s === s.toUpperCase() || /^[A-Z][a-z]+ /.test(s) ? 1 : 0) - (/[-_.]/.test(s) ? 1 : 0);
     const spellings = Array.from(e.spellings)
       .sort((a, b) => tidy(b[0]) - tidy(a[0]) || b[1] - a[1])
@@ -81,8 +74,6 @@ function collectRooms(docs: { id: string; data: TimetableDoc }[]): Room[] {
   }).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
 }
 
-// Likely-wrong names, each with the fix to apply. Only offered, never
-// applied without a click.
 function suggest(rooms: Room[]): Suggestion[] {
   const byKey = new Map(rooms.map((r) => [r.key, r]));
   const out: Suggestion[] = [];
@@ -96,13 +87,12 @@ function suggest(rooms: Room[]): Suggestion[] {
       out.push({ from: r, to: '', why: `Teacher's initials (${LEGEND_BY_LETTERS.get(letters(upper))}), not a room` });
       continue;
     }
-    // "CR 1 DN", "CR 1 (DN)", "DN CR 1": strip teacher initials off either end.
+
     const words = r.name.replace(/[()]/g, ' ').split(/\s+/).filter(Boolean);
     let a = 0;
     let b = words.length;
     while (a < b - 1 && isInitials(words[a])) a++;
-    // Trailing initials: known ones, or any 2-4 capital letters right
-    // after a room number ("CR 1 RDM") — rooms end in a number, people don't.
+
     while (
       b > a + 1 &&
       (isInitials(words[b - 1]) || (/^[A-Z]{2,4}$/.test(words[b - 1]) && /\d$/.test(words[b - 2])))
@@ -154,8 +144,6 @@ export default function RoomCleanup() {
     return q ? rooms.filter((r) => r.key.includes(q) || r.uses.some((u) => roomKey(u.cls).includes(q))) : rooms;
   }, [rooms, search]);
 
-  // Rewrites every timetable with the given fixes (key -> right name,
-  // '' = remove), remembers them for future imports, then reloads.
   async function apply(fixes: RoomAliases, summary: string) {
     if (!docs) return;
     setBusy(true);
@@ -179,8 +167,7 @@ export default function RoomCleanup() {
         }));
         if (changed) changedDocs.push({ id, days });
       }
-      // lastRoomCleanup tells the "Timetable Updated" push to stay quiet —
-      // a room-name tidy-up isn't a schedule change students need pinging about.
+
       for (let i = 0; i < changedDocs.length; i += 400) {
         const batch = writeBatch(db);
         for (const c of changedDocs.slice(i, i + 400)) batch.update(doc(db, 'timetable', c.id), { days: c.days, lastRoomCleanup: serverTimestamp() });

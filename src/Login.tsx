@@ -4,16 +4,12 @@ import { signInWithEmailAndPassword, sendPasswordResetEmail } from 'firebase/aut
 import { auth } from './firebaseConfig';
 import { Icon, type IconName } from './icons';
 
-// Left: dark ink panel with a small bento preview of what's inside
-// (same tiles as Home). Right: the sign-in form. On phones only the form.
 const PREVIEW: { title: string; sub: string; icon: IconName; bg: string; fg: string }[] = [
   { title: 'Resources', sub: 'Notes, papers & slides', icon: 'upload', bg: 'var(--tone-blue-bg)', fg: 'var(--tone-blue-fg)' },
   { title: 'Medical leaves', sub: 'Doctor → HOD → you', icon: 'medical', bg: 'var(--tone-lilac-bg)', fg: 'var(--tone-lilac-fg)' },
   { title: 'Attendance', sub: 'Mark or upload', icon: 'check', bg: 'var(--tone-mint-bg)', fg: 'var(--tone-mint-fg)' },
 ];
 
-// Drifting graduation-cap marks behind the sign-in screen — on the dark panel, and on
-// the form side so phones (where the dark panel is hidden) get them too.
 const MARKS = [
   { x: '6%', y: '10%', s: 64, d: 16, delay: 0 },
   { x: '70%', y: '6%', s: 44, d: 19, delay: -5 },
@@ -36,7 +32,7 @@ function LoginBg({ tone }: { tone: 'dark' | 'light' }) {
           className="login-mark"
           style={{ left: m.x, top: m.y, width: m.s, height: m.s, fontSize: m.s * 0.38, animationDuration: `${m.d}s`, animationDelay: `${m.delay}s` }}
         >
-          {/* the CollegeGo "G" */}
+
           <svg viewBox="150 180 724 664" width="56%" height="56%" fill="none" stroke="currentColor" strokeWidth="96" strokeLinecap="round" strokeLinejoin="round">
             <path d="M 671.8 344.7 A 250 250 0 1 0 653.3 697.8" />
             <path d="M 606 512 H 784 V 668" />
@@ -84,10 +80,7 @@ function Login() {
       await sendPasswordResetEmail(auth, email.trim());
       setInfo(`Reset link sent to ${email.trim()}. Check your inbox.`);
     } catch (err: any) {
-      // Firebase deliberately doesn't distinguish "no account" from
-      // "email failed to send" in the error code for this call (so a
-      // stranger can't use this form to probe which emails have
-      // accounts) — a generic message is the honest one to show here.
+
       setError('Could not send a reset link. Check the email address and try again.');
       console.error('Password reset error:', err.code);
     } finally {

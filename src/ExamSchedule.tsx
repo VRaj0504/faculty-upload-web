@@ -4,10 +4,6 @@ import ExamPdfAttach from './ExamPdfAttach';
 import ExamScheduleManual from './ExamScheduleManual';
 import ExamWholeCollegeImport from './ExamWholeCollegeImport';
 
-// The Exam Schedule tab. Three ways in: attach the college's date sheet
-// PDF as issued (default — no reading or conversion, students just open /
-// download it in the app), a single class by Excel/hand, or a whole-college
-// Excel sheet with Branch/Semester/Exam Type columns for day-by-day cards.
 function ExamSchedule() {
   const [mode, setMode] = useState<'pdf' | 'manual' | 'wholeCollege'>('pdf');
 

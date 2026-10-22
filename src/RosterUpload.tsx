@@ -8,37 +8,18 @@ type RosterRow = {
   branch: string;
   section: string;
   admissionYear: number;
-  // Only meaningful when a section actually mixes multiple specializations
-  // within the SAME branch (e.g. a CSE section split into Core/Cyber/
-  // AI-ML) — left blank otherwise. A different branch entirely (e.g. MNC
-  // students sharing a section with CSE students) doesn't need this, since
-  // branch alone already distinguishes them.
+
   specialization?: string;
-  // Omitted for a UG student (undefined here means UG everywhere this
-  // field is read — see getCurrentSemester in src/utils/academicInfo.ts),
-  // set to 'PG' only when the reg. no. itself says so (see
-  // inferProgram below) — an M.Tech's 2-year program caps their semester
-  // count at 4 instead of 8, so this can't be silently left as UG.
+
   program?: 'UG' | 'PG';
 };
 
-// Required fields — a sheet is skipped if any of these columns can't be
-// found in it. section and admissionYear are deliberately NOT required
-// from the sheet: real college roll-list exports are often already scoped
-// to one section/year per sheet (it's right there in the sheet or file
-// name), so they're not always repeated as a per-row column — the
-// uploader can fill these in once per sheet instead, applied to every row
-// in it.
 const REQUIRED_FIELDS: (keyof Pick<RosterRow, 'regNo' | 'name' | 'branch'>)[] = [
   'regNo',
   'name',
   'branch',
 ];
 
-// Maps a bunch of possible real-world header spellings to the field we
-// actually need. Lowercased and stripped of spaces/dots/underscores/
-// slashes/parens before comparing, so "Reg. No.", "reg_no", "Reg No" all
-// match the same way.
 const HEADER_ALIASES: Record<keyof RosterRow, string[]> = {
   regNo: ['regno', 'regno.', 'enrollmentnumber', 'enrollmentno', 'rollno', 'registrationnumber'],
   name: ['name', 'studentname', 'fullname'],
@@ -46,8 +27,7 @@ const HEADER_ALIASES: Record<keyof RosterRow, string[]> = {
   section: ['section', 'sec'],
   admissionYear: ['admissionyear', 'yearofadmission', 'batch', 'batchyear', 'admnyear'],
   specialization: ['specialization', 'specialisation', 'stream', 'track'],
-  // No column ever maps to this — program is always inferred from the
-  // reg. no. itself (see inferProgram below), never read from a sheet.
+
   program: [],
 };
 
@@ -55,12 +35,6 @@ function normalizeHeader(h: string): string {
   return h.toLowerCase().replace(/[\s._/()-]/g, '');
 }
 
-// Substring match, not exact equality — real-world exports often combine
-// two labels into one header cell (e.g. "Reg. No./Roll No." normalizes to
-// "regnorollno", which never exactly equals "regno" alone but clearly
-// contains it). Checking whether any alias appears anywhere in the
-// normalized header catches these combined-cell cases that an exact
-// match would silently miss.
 function headerMatchesField(normalizedHeader: string, aliases: string[]): boolean {
   return aliases.some((alias) => normalizedHeader.includes(alias));
 }
@@ -81,23 +55,13 @@ function matchHeaders(headerRow: string[]): { mapping: Partial<Record<keyof Rost
   return { mapping, missing };
 }
 
-// Turns whatever's actually in a Branch cell — a short code already
-// ("CSE"), or a full degree name ("Computer Science and Engineering
-// (Cyber Security)") — into the app's canonical CSE/ECE/MNC code, plus a
-// specialization when the text names one. Falls back to the raw
-// (uppercased) text for anything unrecognized, rather than silently
-// dropping it, so a genuinely new/unexpected branch name is still visible
-// in the preview instead of disappearing.
 function classifyBranch(raw: string): { branch: string; specialization?: string } {
   const b = raw.trim();
   const lower = b.toLowerCase();
   if (lower.includes('mathematics and computing') || /\bmnc\b/i.test(b)) {
     return { branch: 'MNC' };
   }
-  // Checked before the plain "electronics and communication" case below,
-  // which would otherwise match first and swallow the specialization —
-  // an M.Tech in one of these still says "Electronics and Communication
-  // Engineering" first, the parenthesized specialization comes after.
+
   if (lower.includes('vlsi')) {
     return { branch: 'ECE', specialization: 'VLSI' };
   }
@@ -110,12 +74,7 @@ function classifyBranch(raw: string): { branch: string; specialization?: string 
   if (lower.includes('cyber security')) {
     return { branch: 'CSE', specialization: 'Cyber Security' };
   }
-  // Checked before the plainer "artificial intelligence" / "machine
-  // learning" case below, for the same shadowing reason as VLSI above —
-  // an M.Tech in this specialization still says "Computer Science and
-  // Engineering" first, and its text also contains "Artificial
-  // Intelligence", which would otherwise get it misclassified as the
-  // UG-style AI/ML specialization instead of this more specific one.
+
   if (lower.includes('data science')) {
     return { branch: 'CSE', specialization: 'Data Science and Artificial Intelligence' };
   }
@@ -128,9 +87,6 @@ function classifyBranch(raw: string): { branch: string; specialization?: string 
   return { branch: b.toUpperCase() };
 }
 
-// Turns "ECE-A" / "CSE_D" / "cse d" into a clean "ECE A" / "CSE D" guess
-// for the per-sheet Section field, purely as an editable starting point —
-// never applied silently without the uploader seeing and confirming it.
 function guessSectionFromSheetName(sheetName: string): string {
   return sheetName.replace(/[-_]+/g, ' ').trim().toUpperCase();
 }
@@ -144,16 +100,6 @@ function titleCase(name: string): string {
     .join(' ');
 }
 
-// IIIT Surat's own numbering convention distinguishes these outright —
-// every PG (M.Tech) reg. no. we've seen starts with "PG" (e.g.
-// "PG26DSAI01"), same as every UG one starts with "UG" or "UI". Inferred
-// automatically here rather than needing a manual selector, the same
-// way classifyBranch above infers branch from the Branch column's text
-// instead of asking the uploader to pick it from a dropdown.
-// The batch is written into every reg. no. ("UG26CSE014" → 2026), so it
-// always wins over a year typed in by hand or a sheet column — a 2nd-year
-// sheet uploaded with "2026" typed in was putting seniors' sections
-// (DSAI, VLSI…) under 1st Year everywhere a year is picked.
 function yearFromRegNo(regNo: string): number | null {
   const m = /^(?:UG|PG)(\d{2})/i.exec(regNo.trim());
   return m ? 2000 + Number(m[1]) : null;
@@ -167,8 +113,8 @@ type SheetParseResult = {
   sheetName: string;
   headerRowIndex: number;
   mapping: Partial<Record<keyof RosterRow, number>>;
-  rows: any[][]; // raw rows after the header row
-  error: string | null; // set if regNo/name/branch couldn't be found at all
+  rows: any[][];
+  error: string | null;
   included: boolean;
   sectionOverride: string;
 };
@@ -259,8 +205,7 @@ function buildRowsForSheet(
     const admissionYear =
       yearFromRegNo(regNo) ??
       (needsManualYear ? Number(fallbackAdmissionYear) : Number(row[sheet.mapping.admissionYear!]));
-    // A column explicitly named Specialization (if present) always wins
-    // over whatever classifyBranch derived from the Branch text itself.
+
     const columnSpecialization =
       sheet.mapping.specialization !== undefined
         ? String(row[sheet.mapping.specialization] ?? '').trim()
@@ -292,18 +237,11 @@ function RosterUpload() {
   const handleFile = async (file: File) => {
     setStatus('Reading file...');
     setPreview([]);
-    // Loaded on demand rather than imported at the top — xlsx is a large
-    // library (~500KB+ minified), and someone only ever using the
-    // Resources tab shouldn't have to download it at all.
+
     const XLSX = await import('xlsx');
     const buffer = await file.arrayBuffer();
     const workbook = XLSX.read(buffer, { type: 'array' });
 
-    // Every sheet in the workbook is parsed independently — a real roster
-    // export is often one tab per section (see e.g. "ECE-A", "CSE-B",
-    // "CSE-C", "CSE-D" as separate tabs in one file) rather than one flat
-    // sheet, and this handles that without the uploader needing to
-    // manually combine tabs first.
     const parsedSheets = workbook.SheetNames.map((sheetName) => {
       const sheet = workbook.Sheets[sheetName];
       const rawRows: any[][] = XLSX.utils.sheet_to_json(sheet, { header: 1 });
@@ -365,12 +303,7 @@ function RosterUpload() {
 
   const handleUploadToFirestore = async () => {
     if (preview.length === 0) return;
-    // A bulk write like this silently overwrites any existing student
-    // whose reg. no. matches one in the sheet (by design — see the
-    // comment on `doc(db, 'roster', student.regNo)` below), which is a
-    // much bigger, harder-to-undo action than filing one resource. That
-    // deserves at least as much friction as the single-item delete
-    // confirmation elsewhere in this app, not less.
+
     if (
       !confirm(
         `Upload ${preview.length} students to the roster? Any existing student sharing a reg. no. with one here will be updated with the new row's data.`,
@@ -381,19 +314,15 @@ function RosterUpload() {
     setStatus('Uploading...');
 
     try {
-      // Firestore batches cap at 500 writes each, so we chunk the list
-      // into groups of 500 and send one batch per chunk.
+
       const chunkSize = 500;
       for (let i = 0; i < preview.length; i += chunkSize) {
         const chunk = preview.slice(i, i + chunkSize);
         const batch = writeBatch(db);
         chunk.forEach((student) => {
-          // Using regNo AS the document ID means uploading the same
-          // student twice just overwrites their existing entry, instead
-          // of creating a duplicate.
+
           const ref = doc(db, 'roster', student.regNo);
-          // merge: true keeps fields this sheet doesn't have (e.g. specialization,
-          // program) instead of wiping them from the existing roster doc.
+
           batch.set(ref, student, { merge: true });
         });
         await batch.commit();

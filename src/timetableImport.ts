@@ -1,12 +1,5 @@
-// xlsx and pdfjs-dist are both large (400KB+ each) and are only ever
-// needed once a faculty member actually imports a spreadsheet or PDF —
-// never just to open the Timetable tab and look at what's already
-// there. Loading them via dynamic import() inside the functions that
-// use them (instead of a static top-level import) keeps them out of
-// this module's own chunk entirely, matching the pattern every other
-// upload screen in the app already uses for xlsx. Each loader below is
-// only ever actually fetched once per session — the browser/module
-// cache makes every call after the first resolve instantly.
+
+
 async function getXLSX() {
   return await import('xlsx');
 }
@@ -15,10 +8,7 @@ let pdfWorkerConfigured = false;
 export async function getPdfjs() {
   const pdfjsLib = await import('pdfjs-dist');
   if (!pdfWorkerConfigured) {
-    // pdf.js needs its worker script available at runtime. The npm
-    // package ships it pre-built; importing it as a URL and pointing
-    // workerSrc at that URL is the standard Vite-friendly way to wire
-    // this up without a separate manual copy-to-public-folder step.
+
     // eslint-disable-next-line @typescript-eslint/ban-ts-comment
     // @ts-ignore -- Vite's ?url suffix has no type declaration, but is real.
     const { default: pdfWorkerUrl } = await import('pdfjs-dist/build/pdf.worker.mjs?url');
@@ -62,15 +52,9 @@ function normalizeDayLabel(raw: string): string | null {
   return match ? match.label : null;
 }
 
-// A single time value out of a spreadsheet cell can arrive in wildly
-// different shapes depending on how the sheet was authored: "9:00",
-// "09:00 AM", or (because Excel silently reformats time-looking text
-// into its own serial date number) a raw float like 0.375 for 9:00 AM.
-// This normalizes all three into a plain "H:MM" 24-hour string, which is
-// what timetableService.ts / TimetableScreen.tsx expect everywhere else.
 function normalizeTimeCell(raw: string | number): string {
   if (typeof raw === 'number') {
-    // Excel time serials are a fraction of a 24-hour day.
+
     const totalMinutes = Math.round(raw * 24 * 60);
     const h = Math.floor(totalMinutes / 60) % 24;
     const m = totalMinutes % 60;
@@ -78,7 +62,7 @@ function normalizeTimeCell(raw: string | number): string {
   }
   const text = raw.trim();
   const match = text.match(/(\d{1,2}):?(\d{2})?\s*(AM|PM)?/i);
-  if (!match) return text; // unrecognized shape — pass through, caller reviews it
+  if (!match) return text;
   let h = parseInt(match[1], 10);
   const m = match[2] ?? '00';
   if (match[3]) {
@@ -86,18 +70,12 @@ function normalizeTimeCell(raw: string | number): string {
     if (isPM && h !== 12) h += 12;
     if (!isPM && h === 12) h = 0;
   } else if (h >= 1 && h <= 7) {
-    // No AM/PM ("2:00"): classes never run 1–7 AM, so it's 14:00.
+
     h += 12;
   }
   return `${h}:${m}`;
 }
 
-// Downloadable starting point for the whole-college upload below --
-// real rows from an already-verified section (ECE Sem1 Section A),
-// not placeholder text, so pasting more rows in the same shape is
-// obvious. Deliberately only a few rows, not a whole section, so it
-// stays a template to build from rather than something to publish
-// as-is by accident.
 export const WHOLE_COLLEGE_TIMETABLE_TEMPLATE_CSV =
   'Branch,Semester,Section,Day,Start Time,End Time,Subject Code,Subject Name,Faculty,Room,Group\n' +
   'ECE,1,A,Monday,09:00,10:00,AS101,,ND,PHY Lab 1,Group 1\n' +
@@ -105,10 +83,6 @@ export const WHOLE_COLLEGE_TIMETABLE_TEMPLATE_CSV =
   'ECE,1,A,Monday,11:00,12:00,AS102,,PAS F1,CR 6,\n' +
   'ECE,1,A,Tuesday,09:00,10:00,MS101,,APS,CR 6,\n';
 
-// Header synonyms this accepts, matched case-insensitively against the
-// sheet's first row. Add more synonyms here if a real department sheet
-// uses different wording than what's covered — safer than trying to
-// guess every possible phrasing up front.
 const HEADER_SYNONYMS: Record<keyof Omit<TimetableSlot, 'id'>, string[]> = {
   startTime: ['start time', 'start', 'from', 'time from'],
   endTime: ['end time', 'end', 'to', 'time to'],
@@ -121,31 +95,17 @@ const HEADER_SYNONYMS: Record<keyof Omit<TimetableSlot, 'id'>, string[]> = {
 const DAY_HEADER_SYNONYMS = ['day', 'weekday'];
 
 function findColumn(headerRow: string[], synonyms: string[]): number {
-  // headerRow can be a sparse array with real gaps at blank cells (a
-  // spacer column, for instance) — .map() at the call site silently
-  // skips those gaps, but .findIndex() below does not: it visits every
-  // index including gaps and hands the gap through as undefined, which
-  // would crash calling .trim() on it. Filling every index explicitly
-  // closes the gaps first.
+
   const filled = Array.from({ length: headerRow.length }, (_, i) => headerRow[i] ?? '');
   return filled.findIndex((h) => synonyms.includes(h.trim().toLowerCase()));
 }
 
 export type SpreadsheetParseResult = {
   days: TimetableDay[];
-  // Rows that had a recognizable day but no recognizable time, or vice
-  // versa — skipped rather than guessed at, since a half-parsed row is
-  // more dangerous than a visibly missing one (it looks complete but
-  // shows the wrong thing). Reported back so the uploader can go fix
-  // the raw sheet and re-import, rather than silently losing rows.
+
   skippedRowCount: number;
 };
 
-// Fully deterministic — no OCR, no guessing beyond the header-synonym
-// matching above. Works for .xlsx, .xls, and .csv, since SheetJS reads
-// all three through the same API. Expects one row per class slot, with
-// a Day column plus Start/End time columns; every other column is
-// optional and left blank if the sheet doesn't have it.
 export async function parseSpreadsheetFile(file: File): Promise<SpreadsheetParseResult> {
   const XLSX = await getXLSX();
   const buffer = await file.arrayBuffer();
@@ -177,7 +137,7 @@ export async function parseSpreadsheetFile(file: File): Promise<SpreadsheetParse
   let skippedRowCount = 0;
 
   for (const row of rows.slice(1)) {
-    if (row.every((cell) => String(cell).trim() === '')) continue; // blank spacer row
+    if (row.every((cell) => String(cell).trim() === '')) continue;
 
     const dayLabel = normalizeDayLabel(String(row[dayCol] ?? ''));
     const startRaw = row[startCol];
@@ -206,21 +166,12 @@ export async function parseSpreadsheetFile(file: File): Promise<SpreadsheetParse
   return { days, skippedRowCount };
 }
 
-// Renders a PDF's first page to a JPEG Blob, so a PDF can be fed through
-// the exact same extractTimetableInfo Vision-OCR Cloud Function that
-// already handles photo imports — no separate PDF-parsing pipeline to
-// build and no separate reliability story to reason about. For a
-// multi-page "whole college" PDF (one page per section), see
-// renderAllPdfPagesToJpegBlobs below instead.
 export async function renderPdfFirstPageToJpegBlob(file: File): Promise<Blob> {
   const pdfjsLib = await getPdfjs();
   const buffer = await file.arrayBuffer();
   const pdf = await pdfjsLib.getDocument({ data: buffer }).promise;
   const page = await pdf.getPage(1);
-  // Scale 2x for OCR legibility — a PDF rendered at its native "CSS
-  // pixel" viewport is often too low-resolution for Vision to read small
-  // timetable cell text reliably, the same reason a low-res phone photo
-  // OCRs worse than a clear one.
+
   const viewport = page.getViewport({ scale: 2 });
   const canvas = document.createElement('canvas');
   canvas.width = viewport.width;
@@ -238,13 +189,6 @@ export async function renderPdfFirstPageToJpegBlob(file: File): Promise<Blob> {
   });
 }
 
-// Renders EVERY page of a PDF to a JPEG Blob — for a "whole college"
-// timetable PDF where one page = one section's schedule. Each page still
-// gets OCR'd separately through extractTimetableInfo (same as the
-// single-page path); this only handles the rendering side. Kept separate
-// from renderPdfFirstPageToJpegBlob rather than adding a "how many pages"
-// parameter to it, since the two call sites (single scan import vs. bulk
-// import) have different UI flows around them.
 export async function renderAllPdfPagesToJpegBlobs(file: File): Promise<Blob[]> {
   const pdfjsLib = await getPdfjs();
   const buffer = await file.arrayBuffer();
@@ -271,17 +215,6 @@ export async function renderAllPdfPagesToJpegBlobs(file: File): Promise<Blob[]> 
   return blobs;
 }
 
-// Best-effort extraction of "SEMESTER <n> <BRANCH> [<SECTION>]" from a
-// page's OCR'd text — every page in a real "whole college" timetable
-// export has this as its title (see the sample PDF this was built
-// against), and Vision OCR reads title text along with the grid, so this
-// needs no extra API call, just a regex over rawText that
-// extractTimetableInfo already returns. Deliberately conservative: only
-// recognizes the three branches this app actually models (CSE/ECE/MNC).
-// A M.Tech page, or any page whose title doesn't match, returns null —
-// left for the reviewer to fill in by hand rather than guessed at, since
-// a wrong auto-fill here would silently save a section's real timetable
-// under the wrong class.
 export function detectSectionFromHeaderText(
   rawText: string,
 ): { branch: string; semester: number; section: string } | null {
@@ -312,13 +245,6 @@ const SECTION_HEADER_SYNONYMS = {
   section: ['section', 'sec'],
 };
 
-// Same deterministic parsing as parseSpreadsheetFile, but for a single
-// sheet covering EVERY section at once — expects three extra columns
-// (Branch, Semester, Section) on every row, and groups rows by that
-// triple into one TimetableDay[] set per section. This is the fully
-// automatic path (no OCR, no per-page review needed): if your timetable
-// software can export one big sheet like this instead of a PDF, use
-// this over the PDF batch import every time.
 export async function parseSpreadsheetAllSections(file: File): Promise<MultiSectionParseResult> {
   const XLSX = await getXLSX();
   const buffer = await file.arrayBuffer();
@@ -401,48 +327,11 @@ export async function parseSpreadsheetAllSections(file: File): Promise<MultiSect
   return { groups: Array.from(byGroup.values()), skippedRowCount };
 }
 
-// Parses a "PDF converted to Excel" style workbook — one sheet per
-// section, sheet name itself is the section title ("SEMESTER 1 ECE A"),
-// row 1 is "Day" + 9 time-range column headers, each subsequent row is
-// one day with each cell holding that slot's text (possibly multi-line:
-// subject code on its own line, room+faculty combined on the next).
-// A day with two groups sharing the same time slot (a lab split into
-// Group 1 / Group 2) appears as TWO rows: the first with the day name
-// and Group 1's cells, the second with a blank day cell (meaning "same
-// day as above") and Group 2's cells in the same columns — this reads
-// that "blank day = continuation of the previous day" convention
-// directly rather than needing to split text within one cell.
-//
-// Deliberately does not try to split a cell's second line into
-// separate room/faculty fields — "CR 6 PAS F1" is genuinely ambiguous
-// (is "F1" faculty or part of the room code?) without knowing this
-// sheet's exact convention, and a wrong split is worse than an unsplit
-// line a reviewer can see whole and fix themselves.
 function to24Hour(hour12: number, meridiem: string): number {
   const h = hour12 % 12;
   return /pm/i.test(meridiem) ? h + 12 : h;
 }
 
-// A header like "01:00 - 02:00 PM" only states the meridiem once, on
-// the end time — the start is genuinely ambiguous between 1 AM and
-// 1 PM from its text alone. Rather than treat "no explicit meridiem"
-// as "don't adjust" (which silently produces 1:00 instead of the
-// correct 13:00 for every such afternoon column), this tries both AM
-// and PM for whichever side lacks one and keeps whichever keeps the
-// range moving forward in time by a plausible single-class-slot gap
-// (0–4 hours) — true for every real class slot, never true for the
-// wrong meridiem on a well-formed range.
-// A grid cell's lines after the subject code are Room then Faculty,
-// in that order, on their own lines -- this function's job, and the
-// template built from it, teaches that convention rather than
-// guessing at it. With exactly that shape (2+ lines), the LAST line
-// is faculty and everything before it is the room, joined back
-// together (a room name can itself span two lines). With only ONE
-// line, there's no reliable way to tell where a room name ends and a
-// name begins without guessing -- exactly the kind of guess that
-// caused the CR1/CR2 room-splitting bug this fixes, so it's kept
-// whole as the room and faculty is left blank rather than split
-// blindly.
 function splitRoomAndFaculty(lines: string[]): { room: string; faculty: string } {
   if (lines.length === 0) return { room: '', faculty: '' };
   if (lines.length === 1) return { room: lines[0], faculty: '' };
@@ -480,9 +369,7 @@ function parseHeaderTimeRange(text: string): { startTime: string; endTime: strin
     endHour = diffAM > 0 && diffAM <= 4 ? tryAM : tryPM;
     startHour = startHour0;
   } else {
-    // Neither side has an explicit meridiem. Classes never run 1–7 AM,
-    // so a "2:00-3:00" header is the afternoon (it used to be stored as
-    // 2 AM, which made the student app show those rooms as empty).
+
     startHour = h1 >= 1 && h1 <= 7 ? h1 + 12 : h1;
     endHour = h2 >= 1 && h2 <= 7 ? h2 + 12 : h2;
   }
@@ -493,11 +380,6 @@ function parseHeaderTimeRange(text: string): { startTime: string; endTime: strin
   };
 }
 
-// Cheap check for whether a workbook is this grid format at all, so the
-// caller can try this parser first and fall back to the flat
-// one-row-per-class parser (parseSpreadsheetAllSections) if not — rather
-// than requiring the uploader to know in advance which shape their file
-// is and pick the right button.
 export function looksLikeGridWorkbook(workbook: any): boolean {
   return workbook.SheetNames.some((name: string) => detectSectionFromHeaderText(name) !== null);
 }
@@ -509,7 +391,7 @@ export async function parseGridWorkbookAllSections(workbook: any): Promise<Multi
 
   for (const sheetName of workbook.SheetNames) {
     const detected = detectSectionFromHeaderText(sheetName);
-    if (!detected) continue; // "Index", M.Tech sheets, or anything unrecognized — skipped, not an error
+    if (!detected) continue;
 
     const sheet = workbook.Sheets[sheetName];
     const rows: (string | null)[][] = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false, defval: null });
@@ -539,7 +421,7 @@ export async function parseGridWorkbookAllSections(workbook: any): Promise<Multi
       const dayCellRaw = String(row[0] ?? '').trim();
       const dayLabel = dayCellRaw ? normalizeDayLabel(dayCellRaw) : null;
       if (dayLabel) currentDay = dayLabel;
-      if (!currentDay) continue; // stray row before any day is established (e.g. trailing footer text)
+      if (!currentDay) continue;
 
       for (const tc of timeColumns) {
         const cellRaw = row[tc.colIndex];
@@ -547,16 +429,6 @@ export async function parseGridWorkbookAllSections(workbook: any): Promise<Multi
         const cellText = String(cellRaw).trim();
         if (!cellText) continue;
 
-        // A cell holds either one class, or two stacked ones sharing the
-        // same hour (a lab split into Group 1 / Group 2) — separated by a
-        // blank line in the source. That blank line has to be the FIRST
-        // thing split on, before any per-line trimming/filtering — doing
-        // it the other way around (stripping all blank lines up front)
-        // erases the one signal that tells Group 1 apart from Group 2,
-        // and silently merges Group 2's entire subject/room text into
-        // Group 1's room field as garbage, with no slot of its own at
-        // all. That's the exact bug that left Group 2 students with no
-        // real class data and the wrong (or no) reminder.
         const segments = cellText.split(/\n\s*\n/).map((seg) => seg.trim()).filter(Boolean);
 
         for (const segment of segments) {
@@ -592,12 +464,6 @@ export async function parseGridWorkbookAllSections(workbook: any): Promise<Multi
   return { groups, skippedRowCount };
 }
 
-// Single entry point for the "whole college" Excel/CSV import — reads
-// the file once, checks whether it's the grid format (one sheet per
-// section, sheet name is the section title) or the flat format (one row
-// per class, with Branch/Semester/Section columns), and parses with
-// whichever one actually matches. The uploader shouldn't need to know
-// in advance which shape their own spreadsheet is.
 export async function parseAnySpreadsheetAllSections(file: File): Promise<MultiSectionParseResult> {
   const XLSX = await getXLSX();
   const buffer = await file.arrayBuffer();

@@ -21,7 +21,7 @@ function MarkAttendance() {
   const [date, setDate] = useState(todayIso());
   const [lecture, setLecture] = useState(1);
 
-  const [held, setHeld] = useState<Held[] | null>(null); // every session of this subject for the class
+  const [held, setHeld] = useState<Held[] | null>(null);
   const [marks, setMarks] = useState<Map<string, Mark>>(new Map());
   const [dirty, setDirty] = useState(false);
   const [rollInput, setRollInput] = useState('');
@@ -33,11 +33,9 @@ function MarkAttendance() {
   const classStudents = ctx?.students ?? [];
   const classKey = ctx ? `${ctx.batch!.key}|${ctx.cls!.key}|${ctx.subject?.code}|${ctx.specialization}|${ctx.semester}` : '';
 
-  // Lecture vs lab/workshop, and which lab batch. Remembered per class +
-  // subject so a weekly lab is one click.
   const [kind, setKind] = useState<'lecture' | 'lab'>('lecture');
   const [hours, setHours] = useState(1);
-  const [batchMode, setBatchMode] = useState<string>('all'); // all | h1 | h2 | r:<ranges> | saved
+  const [batchMode, setBatchMode] = useState<string>('all');
   const [rangeText, setRangeText] = useState('');
   const [savedOnly, setSavedOnly] = useState<Set<string> | null>(null);
   useEffect(() => {
@@ -63,7 +61,7 @@ function MarkAttendance() {
       /* ignore */
     }
   };
-  // The students this class is for: the whole class, or one lab batch.
+
   const students = useMemo(() => {
     if (batchMode === 'saved' && savedOnly) return classStudents.filter((s) => savedOnly.has(s.regNo));
     if (batchMode === 'all' || batchMode === 'saved') return classStudents;
@@ -87,8 +85,6 @@ function MarkAttendance() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [classKey]);
 
-  // The saved record for the chosen date + class of the day, if any (one
-  // doc per branch in the section).
   const existing = useMemo(
     () => (held ?? []).filter((h) => h.date === date && (h.lecture ?? 1) === lecture),
     [held, date, lecture],
@@ -125,7 +121,6 @@ function MarkAttendance() {
     setRollFeedback('');
   }, [existing]);
 
-  // Closing the tab with unsaved marks asks first.
   useEffect(() => {
     if (!dirty) return;
     const h = (e: BeforeUnloadEvent) => {
@@ -136,7 +131,6 @@ function MarkAttendance() {
     return () => window.removeEventListener('beforeunload', h);
   }, [dirty]);
 
-  // Clicking names keeps the typed-absentees box in step with the list.
   const absentText = (m: Map<string, Mark>) =>
     Array.from(m)
       .filter(([, v]) => v === 'A')
@@ -171,8 +165,6 @@ function MarkAttendance() {
     return { A, OD, P: students.length - A - OD };
   }, [marks, students]);
 
-  // "114, 117" or full numbers → those students absent, everyone else present
-  // (on-duty marks are kept).
   const applyRolls = () => {
     if (!ctx) return;
     const tokens = rollInput.split(/[\s,;]+/).map((t) => t.trim()).filter(Boolean);
@@ -202,9 +194,6 @@ function MarkAttendance() {
       : [];
   const lecturesThatDay = (held ?? []).filter((h) => h.date === date).map((h) => h.lecture ?? 1);
 
-  // Another lab batch already saved in this slot (no student in common with
-  // the batch being marked now) → save this one as the next free class of
-  // the day instead of overwriting it.
   const otherBatchInSlot =
     existing.length > 0 &&
     existing.some((d) => d.onlyEnrollmentNumbers?.length) &&
@@ -248,8 +237,7 @@ function MarkAttendance() {
         partOfClass,
       );
       await writeSessions(docs);
-      // A branch that had a record before but has no students now is cleaned up
-      // (never the other batch's record).
+
       const stale = otherBatchInSlot ? [] : existing.map((e) => e.id).filter((id) => !docs.some((d) => d.id === id));
       if (stale.length) await deleteSessions(stale);
       if (lecture !== saveLecture || otherBatchInSlot) setLecture(lecture);
@@ -292,7 +280,6 @@ function MarkAttendance() {
 
   const confirmLeave = () => !dirty || confirm('You have unsaved attendance. Discard it?');
 
-  // Class days recorded so far, newest first.
   const heldDays = useMemo(() => {
     const m = new Map<string, { date: string; lecture: number; absent: number }>();
     for (const h of held ?? []) {

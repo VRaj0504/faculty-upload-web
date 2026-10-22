@@ -34,8 +34,6 @@ type TimetableDay = {
 
 const WEEKDAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
 
-// Must match src/firebase/timetableService.ts's timetableDocId() in the
-// mobile app exactly — same three pieces, same order, same separator.
 function timetableDocId(branch: string, semester: number, section: string): string {
   return `${branch}-${semester}-${section}`;
 }
@@ -56,13 +54,6 @@ function emptyWeek(): TimetableDay[] {
   return WEEKDAYS.map((day) => ({ day, slots: [] }));
 }
 
-// Fixed-name subjects for a branch+semester, from the same static list
-// CurriculumUpload.tsx seeds Firestore from — used here to populate a
-// real dropdown instead of a free-text Subject Code field, so a typo
-// can no longer produce a code that doesn't exist. Electives are
-// deliberately absent from `curriculum` (their real name varies per
-// student), which is why the dropdown always also offers an "Other /
-// elective" escape hatch that falls back to free text for that one row.
 function subjectOptionsFor(branchValue: string, semesterValue: string): { code: string; name: string }[] {
   const branchKey = branchValue.trim().toUpperCase() as keyof typeof curriculum;
   const semesterNum = Number(semesterValue);
@@ -70,12 +61,6 @@ function subjectOptionsFor(branchValue: string, semesterValue: string): { code: 
   return curriculum[branchKey][semesterNum] ?? [];
 }
 
-// The aSc PDFs/Excel this data was originally transcribed from write
-// codes WITH a space ("AS 101"), but curriculum.ts stores them without
-// one ("AS101") — a straight === comparison treats those as two
-// different codes and wrongly falls back to "Other", even though it's
-// a perfectly real, listed subject. Comparing with spaces and case
-// stripped fixes that without changing what's actually stored.
 function normalizeCode(code: string): string {
   return code.replace(/\s+/g, '').toUpperCase();
 }
@@ -87,23 +72,11 @@ function matchCurriculumOption(
   return options.find((o) => normalizeCode(o.code) === normalizeCode(code));
 }
 
-// Faculty initials + full name, for the shared <datalist> below —
-// typing still works (so a genuinely new or multi-faculty combo like
-// "ND/BP" is never blocked), but anyone already in the legend now
-// shows up as a suggestion instead of needing to be retyped from
-// memory.
 const FACULTY_DATALIST_OPTIONS = Object.entries(FACULTY_LEGEND).map(([initials, name]) => ({
   initials,
   name,
 }));
 
-// One editable class row — Subject Code as a curriculum-driven dropdown
-// (auto-fills Subject Name, with an "Other / elective" escape hatch to
-// free text for anything not in the fixed list), Faculty as a free-text
-// field suggested from FACULTY_LEGEND via the shared datalist. Used by
-// both the single-section editor below and the bulk whole-college
-// preview's per-section slot editor, so a typo is caught in either
-// workflow the same way, not just the slower one.
 function SlotRow({
   slot,
   branch,
@@ -146,9 +119,7 @@ function SlotRow({
         style={{ width: 60 }}
       />
       {subjectOptions.length === 0 ? (
-        // No branch/semester picked yet, or nothing in the static
-        // curriculum list for it (e.g. MNC) — fall back to free text
-        // rather than an empty dropdown.
+
         <input
           type="text"
           value={slot.subjectCode}
@@ -163,12 +134,7 @@ function SlotRow({
           onChange={(e) => {
             if (e.target.value === '__custom__') return;
             const chosen = subjectOptions.find((o) => o.code === e.target.value);
-            // Both fields land in ONE call — updating them as two
-            // separate calls (subjectCode, then subjectName) each
-            // computed their own copy of the slot from the same
-            // not-yet-updated state, so the second call silently threw
-            // away the first's change. A single combined update can't
-            // do that.
+
             onChange(chosen ? { subjectCode: e.target.value, subjectName: chosen.name } : { subjectCode: e.target.value });
           }}
           style={{ width: 190 }}
@@ -231,9 +197,6 @@ function SlotRow({
   );
 }
 
-// Rendered once, top-level, so every SlotRow's faculty <input
-// list="faculty-legend-options"> resolves regardless of which editor
-// (single-section or bulk-preview) it's inside.
 function FacultyDatalist() {
   return (
     <datalist id="faculty-legend-options">
@@ -246,15 +209,6 @@ function FacultyDatalist() {
   );
 }
 
-// The 9 time columns every real IIIT Surat timetable uses (see the aSc
-// exports) — fixed, not typed per class, which is the whole point: a
-// faculty member picks a DAY × COLUMN cell instead of typing "9:00" and
-// "10:00" into two separate free-text boxes, so a mistyped or
-// transposed time can no longer happen at all for anything that fits
-// this standard grid. startTime/endTime here are what actually gets
-// saved on the slot — same "H:MM" shape normalizeTimeCell already
-// produces elsewhere, so a grid-entered class looks identical in
-// Firestore to one that came in through spreadsheet/PDF import.
 const GRID_TIME_COLUMNS: { label: string; header: string; startTime: string; endTime: string }[] = [
   { label: '1', header: '9-10 AM', startTime: '9:00', endTime: '10:00' },
   { label: '2', header: '10-11 AM', startTime: '10:00', endTime: '11:00' },
@@ -274,23 +228,12 @@ const GRID_DAY_LABELS: Record<string, string> = {
   Friday: 'Fr',
 };
 
-// "9:00" and "09:00" are the same time but different strings — imported
-// sheets/PDFs and hand-typed times don't reliably agree on padding, so
-// every column match has to go through minutes rather than a straight
-// string compare.
 function timeToMinutes(raw: string): number | null {
   const match = raw.trim().match(/^(\d{1,2}):(\d{2})$/);
   if (!match) return null;
   return parseInt(match[1], 10) * 60 + parseInt(match[2], 10);
 }
 
-// One DAY × COLUMN cell — 0, 1, or 2 classes (2 for a lab split into
-// Group 1 / Group 2, or a Div. 1 / Div. 2 elective split). Each present
-// class is an inline mini-editor (Subject Code dropdown, Faculty
-// autocomplete, Room) with no time fields at all, since the column
-// already fixes those. This is the piece that removes the "typed the
-// wrong time into the wrong day's row" mistake class entirely, not just
-// the subject/faculty typo class SlotRow already handles.
 function GridCell({
   slots,
   branch,
@@ -319,8 +262,7 @@ function GridCell({
     const matchedOption = matchCurriculumOption(subjectOptions, slot.subjectCode);
     const isKnownCode = subjectOptions.length === 0 || !!matchedOption;
     const endMinutes = timeToMinutes(slot.endTime);
-    // Defaults to 1hr if the slot's endTime is blank/unparseable (a
-    // brand-new slot) rather than crashing on the arithmetic below.
+
     const durationHours = endMinutes != null ? Math.max(1, Math.round((endMinutes - startMinutes) / 60)) : 1;
     return (
       <div key={slot.id} style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem', marginBottom: '0.3rem' }}>
@@ -348,9 +290,7 @@ function GridCell({
             onChange={(e) => {
               if (e.target.value === '__custom__') return;
               const chosen = subjectOptions.find((o) => o.code === e.target.value);
-              // Both fields in ONE call — see SlotRow's identical
-              // comment above for why two separate calls here silently
-              // dropped the subjectCode change.
+
               onUpdateSlot(
                 slot.id,
                 chosen ? { subjectCode: e.target.value, subjectName: chosen.name } : { subjectCode: e.target.value },
@@ -401,11 +341,7 @@ function GridCell({
             max={maxSpanHours}
             value={durationHours}
             onChange={(e) => {
-              // A 2-3hr lab (11-2, 1-3, etc.) is just this slot's endTime
-              // pushed out — bumping this to 2 or 3 makes the cell span
-              // that many time columns below, same as the real printed
-              // timetable. Clamped to how many columns are actually left
-              // in the day from this one.
+
               const hrs = Math.max(1, Math.min(maxSpanHours, Number(e.target.value) || 1));
               const newEndMinutes = startMinutes + hrs * 60;
               const h = Math.floor(newEndMinutes / 60);
@@ -468,19 +404,6 @@ function GridCell({
   );
 }
 
-// The full week as a real grid — Days as rows, the 9 fixed slots as
-// columns — instead of a flat "add class" list per day. This is what
-// both the single-section editor and the bulk whole-college preview's
-// per-section editor render now: pick Branch/Semester/Section, the grid
-// appears (blank or pre-filled from what's already saved), edit cells
-// directly, publish.
-//
-// A slot whose time doesn't land on any of the 9 standard columns
-// (a one-off makeup class, or old data saved before this grid existed)
-// is never silently dropped — it's listed below the grid, still fully
-// editable via the same SlotRow used elsewhere, so nothing saved
-// through the old flat editor becomes invisible just because this grid
-// is now the default view.
 function TimetableGrid({
   days,
   branch,
@@ -503,10 +426,7 @@ function TimetableGrid({
 
   const addSlot = (dayIndex: number, column: (typeof GRID_TIME_COLUMNS)[number], group?: string, hours?: number) => {
     const next = [...days];
-    // Splitting an existing slot into two groups inherits ITS current
-    // duration (which may already be a 2-3hr lab) rather than resetting
-    // to a fresh 1hr block — a Group 2 added onto an already-widened
-    // Group 1 lab should cover the same span, not just its first hour.
+
     const existing = next[dayIndex].slots.filter((s) => timeToMinutes(s.startTime) === timeToMinutes(column.startTime));
     const startMinutes = timeToMinutes(column.startTime)!;
     const inheritedEndTime =
@@ -524,9 +444,7 @@ function TimetableGrid({
       endTime: inheritedEndTime,
       ...(group ? { group } : {}),
     };
-    // Splitting an existing single slot into two also labels the first
-    // one "Group 1" if it wasn't already labeled, so the pair reads
-    // clearly rather than one being blank and the other "Group 1".
+
     const updatedSlots = next[dayIndex].slots.map((s) =>
       group && existing.length === 1 && s.id === existing[0].id && !s.group ? { ...s, group: 'Group 1' } : s,
     );
@@ -540,22 +458,11 @@ function TimetableGrid({
     onChange(next);
   };
 
-  // Slots whose time doesn't match any of the 9 standard columns,
-  // grouped by day index so they can still be edited (not lost) below
-  // the grid.
   const unmatchedByDay = days.map((d) =>
     d.slots.filter((s) => !GRID_TIME_COLUMNS.some((c) => timeToMinutes(c.startTime) === timeToMinutes(s.startTime))),
   );
   const hasUnmatched = unmatchedByDay.some((s) => s.length > 0);
 
-  // Builds one day's <td> cells left to right. A lab that's been
-  // widened past 1hr (via the "Hrs" control in GridCell) needs a real
-  // HTML colSpan across however many columns it now covers — and every
-  // column it covers must NOT get its own separate <td>, or the row
-  // would render too many cells and the whole table would misalign.
-  // colIndex is advanced by the span every time a cell is placed,
-  // whether that span is 1 (an ordinary class, or an empty "+ class"
-  // column) or more (a real lab).
   const renderDayCells = (dayData: TimetableDay, dayIndex: number) => {
     const cells: ReactElement[] = [];
     let colIndex = 0;
@@ -663,14 +570,7 @@ function TimetableGrid({
 }
 
 function TimetableEditor() {
-  // Loaded once so the bulk-import preview can show which section
-  // values actually exist for a branch in the real roster — a PDF or
-  // spreadsheet's own title ("SEMESTER 3 CSE B") uses whatever letter
-  // convention that document happens to use, which is NOT guaranteed
-  // to match how sections are actually labeled in student profiles
-  // (e.g. a roster using "CSE1"/"CSE2" instead of "A"/"B"). Without
-  // this cross-check, a wrong auto-detected section silently saves a
-  // timetable that matches zero real students.
+
   const [rosterSections, setRosterSections] = useState<{ branch: string; section: string }[]>([]);
   useEffect(() => {
     getDocs(collection(db, 'roster')).then((snap) => {
@@ -689,12 +589,6 @@ function TimetableEditor() {
     });
   }, []);
 
-  // Loaded once so imported timetable slots can be enriched with the
-  // real subject name, not just the bare code a PDF/spreadsheet shows
-  // (e.g. "CS 304" -> "Database Management Systems"). Keyed by
-  // branch + a normalized code (spaces stripped, uppercased) since a
-  // timetable's own code formatting ("CS 304") doesn't always match
-  // curriculum's stored formatting ("CS304") exactly.
   const [curriculumLookup, setCurriculumLookup] = useState<Map<string, string>>(new Map());
   const [curriculumLoading, setCurriculumLoading] = useState(true);
   useEffect(() => {
@@ -723,11 +617,6 @@ function TimetableEditor() {
   const [importRawText, setImportRawText] = useState('');
   const [showImportRawText, setShowImportRawText] = useState(false);
 
-  // Handles both a photo AND a PDF — a PDF's first page is rendered to a
-  // JPEG client-side (see timetableImport.ts) and fed through the exact
-  // same Vision OCR call as a photo would be. Same accuracy story as a
-  // photo either way: a reasonable first pass, always reviewed before
-  // saving, never trusted outright.
   const handleImportFromScan = async (file: File) => {
     if (!days) {
       setStatus('Load a section first (Branch/Semester/Section above), then import a scan into it.');
@@ -767,12 +656,6 @@ function TimetableEditor() {
         return;
       }
 
-      // Best-effort only — this replaces whatever's currently in the
-      // editor with the scan's guesses, on the assumption this is being
-      // used to start a fresh timetable from a new emailed photo/PDF,
-      // not to patch an existing one. Every cell still needs to be
-      // checked against the original document before saving; nothing
-      // here is trusted as final.
       const next: TimetableDay[] = WEEKDAYS.map((day) => ({
         day,
         slots: slots
@@ -799,28 +682,12 @@ function TimetableEditor() {
     }
   };
 
-  // Fully automatic — no OCR guessing involved. Parses an .xlsx/.xls/.csv
-  // deterministically (see timetableImport.ts) straight into the editor's
-  // day/slot structure. Still shown in the editor rather than saved
-  // directly, so a typo'd source column or unexpected day name is caught
-  // before it reaches students, but there's no per-cell reconstruction
-  // needed the way a scan import has.
   const [spreadsheetImporting, setSpreadsheetImporting] = useState(false);
 
-  // Bulk Excel/CSV: parsed groups sit here for review before any
-  // Firestore write happens — nothing gets saved until "Confirm & Save
-  // All" is clicked, same "show it before committing" principle as the
-  // single-section import, just applied to many sections at once instead
-  // of many cells within one section.
   const [bulkExcelImporting, setBulkExcelImporting] = useState(false);
   const [bulkExcelPreview, setBulkExcelPreview] = useState<{ groups: MultiSectionGroup[]; skippedRowCount: number } | null>(null);
   const [bulkExcelSaving, setBulkExcelSaving] = useState(false);
 
-  // Bulk PDF: each page is OCR'd into a queue, then reviewed ONE AT A
-  // TIME through the exact same branch/semester/section/days editor
-  // already used for a single-section import — never auto-saved, since
-  // OCR per page is exactly as approximate as the single-photo import
-  // already is, just repeated across every page.
   const [bulkPdfImporting, setBulkPdfImporting] = useState(false);
   const [bulkPdfQueue, setBulkPdfQueue] = useState<{ pageNumber: number; branch: string; semester: string; section: string; days: TimetableDay[]; rawText: string; undetected: boolean }[]>([]);
   const [bulkPdfIndex, setBulkPdfIndex] = useState(0);
@@ -847,11 +714,6 @@ function TimetableEditor() {
     }
   };
 
-  // Bulk Excel/CSV — parses the whole sheet into per-section groups and
-  // shows them for review; nothing is saved until handleConfirmBulkExcel
-  // runs. Independent of the single-section Branch/Semester/Section
-  // fields above — a bulk import covers many sections, so it doesn't
-  // make sense to gate it on one section being "loaded" first.
   const downloadTimetableTemplate = () => {
     const blob = new Blob([WHOLE_COLLEGE_TIMETABLE_TEMPLATE_CSV], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
@@ -862,13 +724,6 @@ function TimetableEditor() {
     URL.revokeObjectURL(url);
   };
 
-  // A grid-shaped sheet, one per section, matching exactly how the
-  // college's own aSc-exported timetable already looks -- easier for
-  // faculty to fill in or edit than the flat row-per-slot CSV above,
-  // since it's the same shape they already read and think in. Built
-  // client-side with the same xlsx library already used to parse
-  // uploads, from real, already-verified rows (ECE Sem1 Section A),
-  // not placeholder text.
   const downloadGridTemplate = async () => {
     const XLSX = await import('xlsx');
     const rows = [
@@ -884,10 +739,7 @@ function TimetableEditor() {
     const sheet = XLSX.utils.aoa_to_sheet(rows);
     sheet['!cols'] = [{ wch: 12 }, { wch: 26 }, { wch: 22 }, { wch: 22 }];
     const workbook = XLSX.utils.book_new();
-    // The sheet name IS what tells the importer which section this is
-    // -- "SEMESTER <n> <branch> <section>", matched by
-    // detectSectionFromHeaderText. Faculty rename this per section
-    // when they duplicate the sheet for a real upload.
+
     XLSX.utils.book_append_sheet(workbook, sheet, 'SEMESTER 1 ECE A');
     const wbout = XLSX.write(workbook, { type: 'array', bookType: 'xlsx' });
     const blob = new Blob([wbout], { type: 'application/octet-stream' });
@@ -913,12 +765,7 @@ function TimetableEditor() {
         setStatus('No recognizable section rows found in this sheet.');
         return;
       }
-      // Fill in each slot's real subject name from Curriculum — a
-      // timetable source only ever has the bare code ("CS 304"), never
-      // the full name, so this is the only place that name comes from.
-      // A slot whose code has no curriculum match at all (e.g. a
-      // division/elective code not yet in Curriculum) is left with an
-      // empty name rather than a guess.
+
       for (const group of result.groups) {
         for (const day of group.days) {
           for (const slot of day.slots) {
@@ -936,10 +783,6 @@ function TimetableEditor() {
     }
   };
 
-  // Lets the reviewer correct a detected group's branch/section before
-  // saving anything — needed because auto-detection reads whatever
-  // convention the SOURCE FILE happens to use, which isn't guaranteed
-  // to match the roster's actual section labels.
   const updateBulkExcelGroupField = (index: number, field: 'branch' | 'section', value: string) => {
     if (!bulkExcelPreview) return;
     const nextGroups = [...bulkExcelPreview.groups];
@@ -947,9 +790,6 @@ function TimetableEditor() {
     setBulkExcelPreview({ ...bulkExcelPreview, groups: nextGroups });
   };
 
-  // Which group (if any) is expanded into the full day/slot editor below
-  // its summary row — only one at a time, so reviewing 11 sections stays
-  // manageable rather than showing every slot of every section at once.
   const [expandedGroupIndex, setExpandedGroupIndex] = useState<number | null>(null);
 
   const setBulkGroupDays = (groupIndex: number, nextDays: TimetableDay[]) => {
@@ -980,8 +820,7 @@ function TimetableEditor() {
     setBulkExcelSaving(true);
     let savedCount = 0;
     try {
-      // Room-name fixes made in Room names are applied on every save, so
-      // a re-imported sheet can't bring a wrong room back.
+
       const roomAliases = await loadRoomAliases();
       for (const group of bulkExcelPreview.groups) {
         const id = timetableDocId(group.branch, group.semester, group.section);
@@ -1009,11 +848,6 @@ function TimetableEditor() {
     }
   };
 
-  // Bulk PDF — OCRs every page, tries to auto-detect each page's
-  // section from its own title text, and queues them up for one-at-a-
-  // time review through the normal single-section editor below (see
-  // loadBulkPdfQueueItem). Each page still costs one Vision OCR call,
-  // same as importing that many photos individually would.
   const handleImportAllFromPdf = async (file: File) => {
     setBulkPdfImporting(true);
     setStatus('Rendering PDF pages…');
@@ -1084,10 +918,6 @@ function TimetableEditor() {
     setImportRawText(item.rawText);
   }
 
-  // Advances the review queue after either a manual "Skip" or right
-  // after handleSave succeeds while a batch is active (wired in below) —
-  // same page-by-page review flow either way, just two different ways
-  // to move past the current page.
   const advanceBulkPdfQueue = () => {
     const nextIndex = bulkPdfIndex + 1;
     if (nextIndex < bulkPdfQueue.length) {
@@ -1113,10 +943,7 @@ function TimetableEditor() {
       const snap = await getDoc(doc(db, 'timetable', id));
       if (snap.exists()) {
         const data = snap.data();
-        // Ensure every weekday is present even if the existing doc is
-        // missing one (e.g. it only ever had Mon-Thu filled in) — editing
-        // should never lose the ability to add a day that was empty
-        // before.
+
         const existingDays: TimetableDay[] = data.days ?? [];
         const merged = WEEKDAYS.map(
           (day) => existingDays.find((d) => d.day === day) ?? { day, slots: [] },
@@ -1136,17 +963,10 @@ function TimetableEditor() {
     }
   };
 
-  // Sorts each day's slots by start time before saving — the editor lets
-  // you add slots in any order, but the mobile app's TimetableScreen
-  // renders whatever order they're stored in, so this keeps the display
-  // correctly chronological regardless of entry order here.
   const handleSave = async () => {
     if (!days) return;
     if (!branch.trim() || !semester.trim() || !section.trim()) {
-      // Most relevant during bulk PDF review — a page whose section
-      // couldn't be auto-detected leaves these blank, and saving with
-      // an incomplete id would silently create a malformed timetable
-      // doc no student's app would ever query correctly.
+
       setStatus('Fill in Branch, Semester, and Section before saving — this page could not auto-detect one or more of them.');
       return;
     }
@@ -1164,7 +984,7 @@ function TimetableEditor() {
       const sortedDays = days.map((d) => ({
         day: d.day,
         slots: [...d.slots]
-          .filter((s) => s.startTime && s.subjectCode) // drop genuinely blank rows
+          .filter((s) => s.startTime && s.subjectCode)
           .sort((a, b) => a.startTime.localeCompare(b.startTime)),
       }));
       const roomAliases = await loadRoomAliases();
@@ -1177,8 +997,7 @@ function TimetableEditor() {
       });
       setExisted(true);
       if (bulkPdfQueue.length > 0) {
-        // Mid-batch-review save — move straight to the next queued page
-        // instead of leaving the reviewer to notice and click into it.
+
         setStatus(`Saved ${branch.trim().toUpperCase()} Sem ${semester} ${section.trim()}.`);
         advanceBulkPdfQueue();
       } else {

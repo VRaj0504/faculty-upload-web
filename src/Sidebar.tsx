@@ -33,8 +33,6 @@ export default function Sidebar({
 }) {
   const navRef = useRef<HTMLElement>(null);
 
-  // Phone: Escape closes the slide-in menu, and focus moves into it when
-  // it opens so keyboard users aren't left behind the scrim.
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();

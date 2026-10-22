@@ -1,9 +1,6 @@
 import { Icon, type IconName } from './icons';
 import { NAV, toneVars, type Tab, type Tone } from './nav';
 
-// Landing page: the most-used jobs as big bento tiles (same style as the
-// app's Home), then every tool grouped by colour.
-
 function greeting(d: Date) {
   const h = d.getHours();
   return h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening';
@@ -16,8 +13,6 @@ function firstName(name: string) {
   return first ? first[0]!.toUpperCase() + first.slice(1) : '';
 }
 
-// Faint drifting copies of the IIIT Surat "IS" mark behind the greeting.
-// Purely decorative: positions are fixed, only transform/opacity animate.
 const LOGOS = [
   { x: '4%', y: '8%', s: 54, d: 15, delay: 0 },
   { x: '22%', y: '58%', s: 38, d: 19, delay: -6 },

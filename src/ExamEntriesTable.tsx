@@ -12,8 +12,6 @@ const blankEntry = (): ExamEntry => ({
   venue: '',
 });
 
-// The editable exam rows shared by the manual editor and the PDF/email
-// review panel — one place for the row layout so they can't drift apart.
 function ExamEntriesTable({
   entries,
   onChange,
@@ -23,9 +21,9 @@ function ExamEntriesTable({
 }: {
   entries: ExamEntry[];
   onChange: (next: ExamEntry[]) => void;
-  // The class's curriculum subjects — when given, the code is picked, not typed.
+
   subjects?: { code: string; name: string }[];
-  problemRows?: number[]; // 1-based indexes to highlight
+  problemRows?: number[];
   onRowEdited?: (rowNumber: number) => void;
 }) {
   const [customRows, setCustomRows] = useState<Set<number>>(new Set());

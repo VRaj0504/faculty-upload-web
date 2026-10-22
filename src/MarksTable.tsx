@@ -1,17 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 
-// A ready-made marks table: one row per student of the picked class, one
-// column per assessment. Total is worked out here; the teacher then goes on
-// to set the grade cutoffs exactly as with an uploaded sheet.
-//
-// Default columns follow the usual IIIT Surat scheme — two quizzes of 10,
-// a mid sem of 25 (20 for the lower-credit subjects) and a 50-mark end sem.
-// The teacher has full control, because the split differs between subjects:
-// any column can be renamed, resized or removed (no quizzes? remove them),
-// and quizzes, a lab / practical, assignment, attendance or a custom column
-// can be added. A Grade column follows the cutoffs live and can be
-// overridden per student.
-
 type Student = { regNo: string; name: string };
 type Comp = { id: string; label: string; max: number; kind: 'quiz' | 'mid' | 'end' | 'lab' | 'other' };
 export type TableMark = { regNo: string; name: string; total: number | null };
@@ -60,8 +48,7 @@ export default function MarksTable({
 }: {
   students: Student[];
   draftKey: string;
-  // Called with the current marks after every change (null while any cell is
-  // invalid), so grading below always works from what is on screen.
+
   onMarks: (marks: TableMark[] | null, absent: string[]) => void;
   gradeFor: (total: number | null) => string | null;
   overrides: Record<string, string>;
@@ -75,8 +62,6 @@ export default function MarksTable({
 
   const rows = useMemo(() => [...students].sort((a, b) => a.regNo.localeCompare(b.regNo)), [students]);
 
-  // Restore (or reset) the draft whenever the class / subject changes, so a
-  // half-entered sheet survives a reload or an accidental tab close.
   useEffect(() => {
     let saved: { comps?: Comp[]; cells?: Record<string, Record<string, string>> } | null = null;
     try {
@@ -115,7 +100,7 @@ export default function MarksTable({
     setComps((prev) => {
       const made = opt.make(prev.filter((c) => c.kind === 'quiz').length);
       const comp: Comp = { id: `${value}${Date.now()}`, ...made };
-      // Keep a sensible order: quizzes, mid sem, lab/others, end sem last.
+
       const rank = (k: Comp['kind']) => ({ quiz: 0, mid: 1, lab: 2, other: 3, end: 4 })[k];
       const next = [...prev];
       let at = next.length;
@@ -162,8 +147,6 @@ export default function MarksTable({
   const noMarks = computed.filter((r) => r.total === null);
   const partial = computed.filter((r) => r.total !== null && r.blanks > 0);
 
-  // Move with Enter / arrow keys like a spreadsheet, and let a column pasted
-  // from Excel fill downwards (and across, if several columns are copied).
   const focusCell = (r: number, c: number) => {
     tableRef.current?.querySelector<HTMLInputElement>(`input[data-cell="${r}-${c}"]`)?.focus();
   };
@@ -178,7 +161,7 @@ export default function MarksTable({
   };
   const onPaste = (e: React.ClipboardEvent<HTMLInputElement>, r: number, c: number) => {
     const text = e.clipboardData.getData('text');
-    if (!/[\n\t]/.test(text.trim())) return; // a single value pastes normally
+    if (!/[\n\t]/.test(text.trim())) return;
     e.preventDefault();
     touch();
     const grid = text.replace(/\r/g, '').replace(/\n+$/, '').split('\n').map((line) => line.split('\t'));
@@ -204,7 +187,6 @@ export default function MarksTable({
     setCells({});
   };
 
-  // Push the current marks up after every change.
   useEffect(() => {
     if (badCells > 0 || loadedKey !== draftKey || computed.every((r) => r.total === null)) {
       onMarks(null, []);

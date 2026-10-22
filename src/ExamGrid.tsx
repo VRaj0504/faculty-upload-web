@@ -3,16 +3,6 @@ import { branchesOf, type ExamEntry } from './examSheetParser';
 import { curriculum } from './curriculum';
 import ExamEntriesTable from './ExamEntriesTable';
 
-// The date sheet as a grid, the same way the Timetable editor shows a
-// week: exam DATES down the side, exam SESSIONS (time slots) across the
-// top, and each cell is "which subject sits this session". Picking a
-// subject from the curriculum fills its code and name, so nothing is
-// typed twice or spelled wrong.
-//
-// It's only a different view of the same `entries` list the row editor
-// uses — nothing new is stored. Dates/sessions with no exam yet are kept
-// in local state so faculty can lay the grid out first and fill it after.
-
 type Session = { start: string; end: string };
 const sessionKey = (s: Session) => `${s.start}|${s.end}`;
 const isPlaced = (e: ExamEntry) => /^\d{4}-\d{2}-\d{2}$/.test(e.date) && /^\d{2}:\d{2}$/.test(e.startTime);
@@ -26,7 +16,7 @@ const dateOf = (iso: string) => {
 const nextExamDay = (iso: string) => {
   const d = dateOf(iso);
   do d.setDate(d.getDate() + 1);
-  while (d.getDay() === 0); // skip Sundays
+  while (d.getDay() === 0);
   return isoOf(d);
 };
 
@@ -50,8 +40,7 @@ function subjectOptions(branch: string, semester: string): { code: string; name:
 const norm = (code: string) => code.replace(/\s+/g, '').toUpperCase();
 
 function defaultSession(examType: string): Session {
-  // Mid-sems/quizzes at IIIT Surat are short morning papers; end-sems are
-  // three hours. Only a starting point — every column's time is editable.
+
   return /endsem|supplementary/.test(examType) ? { start: '10:00', end: '13:00' } : { start: '09:00', end: '10:30' };
 }
 
@@ -89,7 +78,6 @@ export default function ExamGrid({
     return Array.from(map.values()).sort((a, b) => (a.start + a.end).localeCompare(b.start + b.end));
   }, [extraSessions, entries]);
 
-  // Same subject booked twice is almost always a mistake — flag it.
   const repeatedCodes = useMemo(() => {
     const count = new Map<string, number>();
     for (const e of placed) {
@@ -110,7 +98,6 @@ export default function ExamGrid({
   const addExam = (date: string, s: Session) =>
     onChange([...entries, { date, startTime: s.start, endTime: s.end, subjectCode: '', subjectName: '', venue: '' }]);
 
-  // ---- rows (dates) ----
   const addDate = () => {
     const last = dates[dates.length - 1];
     const next = last ? nextExamDay(last) : isoOf(new Date());
@@ -140,12 +127,11 @@ export default function ExamGrid({
     if (n) onChange(entries.filter((e) => !(isPlaced(e) && e.date === date)));
   };
 
-  // ---- columns (sessions) ----
   const addSession = () => {
     const last = sessions[sessions.length - 1];
     let next = defaultSession(examType);
     if (last) {
-      // Next session starts an hour after the last one ends.
+
       const [h, m] = (last.end || last.start).split(':').map(Number);
       const len = last.end ? toMin(last.end) - toMin(last.start) : 90;
       const start = Math.min(h * 60 + m + 60, 20 * 60);

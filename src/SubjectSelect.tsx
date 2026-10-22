@@ -1,10 +1,6 @@
 import { useEffect, useState } from 'react';
 import { subjectsFor } from './curriculum';
 
-// Pick a subject from the branch + semester's curriculum — code and name
-// land together, so they can't be mistyped or mismatched. "Other" is there
-// only for electives and anything not in the curriculum, and then asks for
-// both by hand.
 export default function SubjectSelect({
   branch,
   semester,

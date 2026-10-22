@@ -107,8 +107,7 @@ function CurriculumUpload() {
         const chunk = preview.slice(i, i + chunkSize);
         const batch = writeBatch(db);
         chunk.forEach((subject) => {
-          // One document per subject, ID built from branch+semester+code
-          // so re-uploading a corrected sheet just overwrites, no dupes.
+
           const docId = `${subject.branch}_${subject.semester}_${subject.code}`;
           const ref = doc(db, 'curriculum', docId);
           batch.set(ref, subject);

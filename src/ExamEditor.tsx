@@ -6,8 +6,6 @@ import SegmentedControl from './SegmentedControl';
 import { subjectsFor } from './curriculum';
 import { branchesOf } from './examSheetParser';
 
-// Grid (dates × sessions, like the Timetable editor) or the plain row
-// list — two views of the same entries. The choice is remembered.
 type View = 'grid' | 'list';
 const KEY = 'examEditorView';
 const readView = (): View => {
@@ -45,7 +43,6 @@ export default function ExamEditor({
     }
   };
 
-  // Union of the picked branches' subjects for this semester.
   const listSubjects = (() => {
     const seen = new Map<string, string>();
     for (const b of branchesOf(branch)) for (const s of subjectsFor(b, Number(semester))) if (!seen.has(s.code)) seen.set(s.code, s.name);

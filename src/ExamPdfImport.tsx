@@ -7,25 +7,14 @@ import ExamSheetReview from './ExamSheetReview';
 
 type ExtractResponse = { groups: ExamGroup[]; warnings: string[]; rowCount: number };
 
-// Upload the college's date sheet exactly as the exam cell issues it (a
-// scanned PDF covering every semester and branch) and get one editable
-// draft per class back — no reformatting into a spreadsheet first.
 function ExamPdfImport() {
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState('');
   const [result, setResult] = useState<{ response: ExtractResponse; file: File } | null>(null);
-  // Shows the actual picked file immediately, before extraction even
-  // starts -- so faculty can already be looking at the real document
-  // while the 20-40 second read happens, and keep it up afterward to
-  // check extracted rows against it. A local object URL, not the
-  // eventual Storage URL, since nothing's been uploaded yet at the
-  // moment a file is picked.
+
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewMime, setPreviewMime] = useState<string>('');
 
-  // Object URLs aren't freed automatically -- revoke the old one
-  // whenever a new file is picked or this screen goes away, or each
-  // pick leaks the previous file's blob for the rest of the tab's life.
   useEffect(() => {
     return () => {
       if (previewUrl) URL.revokeObjectURL(previewUrl);

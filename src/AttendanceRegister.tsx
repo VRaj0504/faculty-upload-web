@@ -16,16 +16,10 @@ import {
 import { deleteSessions, writeSessions, type SessionWrite } from './attendanceData';
 import { downloadSemesterRegister, prepare, type Prepared } from './AttendanceExport';
 
-// The faculty's full view of a class's attendance for the semester:
-//  · one subject  → an editable register (students × classes held)
-//  · all subjects → every student's % in every subject + a day view
-// Percentages are always attended ÷ classes actually held for that student.
-
 type Mark = 'P' | 'A' | 'OD' | 'NA';
 type Doc = SessionDoc & { id: string };
 type Col = { key: string; date: string; lecture: number; docs: Map<string, Doc>; isNew?: boolean; hours: number };
 
-// NA ("—") = not part of this class: the other lab batch, for example.
 const NEXT: Record<Mark, Mark> = { P: 'A', A: 'OD', OD: 'NA', NA: 'P' };
 const colKey = (date: string, lecture: number) => `${date}#${lecture}`;
 const inRange = (d: string, from: string, to: string) => (!from || d >= from) && (!to || d <= to);
@@ -51,7 +45,6 @@ export default function AttendanceRegister() {
   const [to, setTo] = useState('');
   const [dayView, setDayView] = useState(todayIso());
 
-  // Editing (one-subject mode)
   const [edits, setEdits] = useState<Map<string, Map<string, Mark>>>(new Map());
   const [newCols, setNewCols] = useState<{ date: string; lecture: number; hours: number }[]>([]);
   const [addHours, setAddHours] = useState(1);
@@ -100,7 +93,6 @@ export default function AttendanceRegister() {
   const excusals = data?.excusals.map ?? new Map<string, ExcusalRange[]>();
   const q = search.trim().toLowerCase();
 
-  // ---------- one subject: the register grid ----------
   const subject = ctx?.subject && data ? data.subjects[0] : null;
   const cols: Col[] = useMemo(() => {
     if (!subject) return [];
@@ -140,7 +132,6 @@ export default function AttendanceRegister() {
     });
   };
 
-  // Per-student totals over the visible date range, edits included.
   const totals = useMemo(() => {
     const out = new Map<string, { attended: number; held: number; pct: number | null }>();
     for (const s of students) {
@@ -182,9 +173,9 @@ export default function AttendanceRegister() {
         const mine = students.filter((s) => s.branch === t.branch);
         const marked = mine.map((s) => [s, markOf(s, c)] as const).filter(([, m]) => m !== 'NA');
         if (!marked.length && !existing) continue;
-        // Keep marks for students outside this view (another specialization picked).
+
         const viewIds = new Set(mine.map((s) => s.regNo));
-        // Some students set to "—": the class was only for the rest (a lab batch).
+
         const partial = marked.length < mine.length;
         const keepOnly = (existing?.onlyEnrollmentNumbers ?? []).filter((r) => !viewIds.has(r));
         const keepAbsent = (existing?.absentEnrollmentNumbers ?? []).filter((r) => !viewIds.has(r));
@@ -273,8 +264,6 @@ export default function AttendanceRegister() {
     }
   };
 
-  // Removes every class of this subject in the current date range (e.g. test
-  // data). Typing the subject code is the confirmation.
   const removeShown = async () => {
     if (!ctx?.subject) return;
     const target = shownCols.filter((c) => !c.isNew);
@@ -320,7 +309,6 @@ export default function AttendanceRegister() {
     }
   };
 
-  // ---------- all subjects: matrix + day view ----------
   const withData = data && !ctx?.subject ? data.subjects.filter((s) => s.sessions.length) : [];
   const matrix = useMemo(() => {
     if (!data || ctx?.subject) return [];
@@ -406,7 +394,6 @@ export default function AttendanceRegister() {
             )}
           </div>
 
-          {/* ---------------- one subject: editable register ---------------- */}
           {ctx.subject && (
             <>
               <div className="att-toolbar">
@@ -569,7 +556,6 @@ export default function AttendanceRegister() {
             </>
           )}
 
-          {/* ---------------- all subjects: matrix + day view ---------------- */}
           {!ctx.subject && (
             <>
               {!withData.length ? (

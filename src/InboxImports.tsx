@@ -41,35 +41,23 @@ type PendingImport = {
   title: string;
   targetScope: TargetScope;
   resourceType: 'Notes' | 'PYQ' | 'Slides' | 'Assignment' | null;
-  // Not part of what the email parser produces — filled in by the reviewer
-  // at approval time, because a paper needs the year it was held to be
-  // filed in the right year folder and the email rarely says.
+
   resourceExamYear?: number | null;
   resourceSubject: string | null;
   noticeCategory: 'Academic' | 'Placement' | 'Event' | 'General' | null;
   noticeDescription: string | null;
   reasoning: string;
-  // Only on contentType 'examSchedule': the per-class drafts ingestFacultyEmail
-  // read out of the attached date sheet, plus anything it wasn't sure about.
+
   examGroups?: ExamGroup[];
   examWarnings?: string[];
   status: 'pending' | 'approved' | 'rejected';
   receivedAt: Timestamp | null;
 };
 
-// Timetable emails are deliberately NOT auto-published from here — a
-// timetable update needs day/time-slot data no plain-language email will
-// reliably contain. Approving a timetable import here just tells the
-// reviewer "here's the attachment, go run it through the Timetable
-// Editor's existing OCR/Excel import", which already has its own
-// review-before-save step.
 function isDirectlyPublishable(contentType: PendingImport['contentType']) {
   return contentType === 'resource' || contentType === 'notice';
 }
 
-// A date sheet that arrived by email. Reviewed with the same editable,
-// whole-sheet panel as the portal's PDF upload, so a wrong row is fixed
-// here rather than published wrong and corrected afterwards.
 function ExamImportCard({
   item,
   busy,
@@ -196,26 +184,18 @@ function InboxImports() {
     }
   };
 
-  // Publishing writes into the SAME collections the mobile app's Resources
-  // and Notices screens already read from — same shape as
-  // resourceService.uploadResource() / noticesService.createNotice(), just
-  // sourced from the reviewer's (possibly edited) draft instead of a form.
   const handleApprove = async (item: PendingImport) => {
     const current = draftFor(item);
     setBusyId(item.id);
     try {
       const scope = current.targetScope;
-      // Never guess the class: an email with no clear target must be fixed
-      // by the reviewer, not silently filed under CSE / semester 1.
+
       if (current.contentType === 'resource' || current.contentType === 'notice') {
         if (scope.scope !== 'all' && !scope.branch) {
           throw new Error('Pick the branch this is for before approving.');
         }
       }
 
-      // The published doc(s) and the status flip commit together, so a
-      // failure can never leave an item "pending" after it was published
-      // (which would duplicate it on retry).
       const batch = writeBatch(db);
 
       if (current.contentType === 'resource') {

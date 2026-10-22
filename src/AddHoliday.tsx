@@ -3,19 +3,11 @@ import { collection, doc, setDoc, deleteDoc, onSnapshot, serverTimestamp } from 
 import { db, auth } from './firebaseConfig';
 
 type HolidayOverride = {
-  date: string; // YYYY-MM-DD, also the doc id
+  date: string;
   name: string;
   addedByEmail?: string;
 };
 
-// For a holiday IIIT Surat announces by email a day or two ahead —
-// Ganesh Visarjan, an unplanned closure, anything not on the fixed
-// annual list already baked into the app. Those circulars go straight
-// to everyone's personal inbox, not this portal's own uploads address,
-// so there's no automatic way to catch one — this is the fast, honest
-// alternative: whoever actually read the real email types it in here,
-// once, and every class reminder / daily status push (mobile app and
-// Cloud Functions both) picks it up within a few minutes.
 function AddHoliday() {
   const [date, setDate] = useState('');
   const [name, setName] = useState('');

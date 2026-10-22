@@ -6,15 +6,6 @@ import type { ExamGroup, ExamTypeId } from './examSheetParser';
 import { uploadExamSheetPdf } from './examPdf';
 import ExamEditor from './ExamEditor';
 
-// Review-and-publish for a WHOLE date sheet at once (every semester and
-// branch on the page). Used by both the portal's PDF upload and the
-// Inbox Imports tab for a date sheet that arrived by email — same
-// screen, so a correction works the same way from either.
-//
-// Nothing here is trusted just because a model read it: every row is
-// editable, every group can be dropped, validateEntries() runs again on
-// each group before anything is written, and the original PDF is one
-// click away to compare against.
 function ExamSheetReview({
   initialGroups,
   warnings = [],
@@ -24,8 +15,8 @@ function ExamSheetReview({
 }: {
   initialGroups: ExamGroup[];
   warnings?: string[];
-  sourceFile?: File | null; // portal upload: stored to Storage at publish time
-  sourcePdf?: { url: string; name: string } | null; // email: already stored
+  sourceFile?: File | null;
+  sourcePdf?: { url: string; name: string } | null;
   onPublished: (count: number) => void;
 }) {
   const [groups, setGroups] = useState<ExamGroup[]>(initialGroups);

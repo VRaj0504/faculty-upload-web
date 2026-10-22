@@ -1,7 +1,5 @@
-// Same map as the mobile app's src/data/facultyLegend.ts (initials on the
-// timetable -> full name), duplicated here so the Timetable Editor can
-// offer faculty as a pick-from-list autocomplete instead of free text.
-// Keep this in sync with the mobile app's copy by hand when either changes.
+
+
 export const FACULTY_LEGEND: Record<string, string> = {
   "K.D.": "Kaustubh Dhondge",
   "R.K.": "Ritesh Kumar",

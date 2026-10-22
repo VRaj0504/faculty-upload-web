@@ -15,12 +15,7 @@ import { Icon } from './icons';
 import { NAV, findTab, toneVars, type Tab } from './nav';
 import { useMedicalWaiting } from './useMedicalWaiting';
 import { useActiveSos } from './useActiveSos';
-// Every tab below is loaded lazily, on first visit to that tab — not all
-// upfront. Several of these pull in genuinely heavy libraries (xlsx,
-// pdfjs-dist) that were previously bundled into the one JS file the
-// whole app has to download before it can render anything, even for a
-// faculty member who only ever uses Resources. Splitting per tab means
-// the initial load only pays for Login/Header/the tab bar/Resources.
+
 const Upload = lazyRetry(() => import('./Upload'));
 const RosterUpload = lazyRetry(() => import('./RosterUpload'));
 const RosterBrowser = lazyRetry(() => import('./RosterBrowser'));
@@ -46,9 +41,6 @@ const Reports = lazyRetry(() => import('./Reports'));
 const MedicalLeaves = lazyRetry(() => import('./MedicalLeaves'));
 const SosBoard = lazyRetry(() => import('./SosBoard'));
 
-// Shown for the brief moment a tab's own code is downloading — only ever
-// visible on that tab's first visit in a session, since the browser
-// caches the chunk after that.
 function TabLoading() {
   return (
     <div style={{ padding: '4rem 0' }}>
@@ -57,16 +49,12 @@ function TabLoading() {
   );
 }
 
-// The page lives in the URL hash (#attendance), so a refresh keeps you
-// where you were and the browser's Back button moves between pages.
 const ALL_TABS = new Set<Tab>(['home', ...NAV.flatMap((g) => g.items.map((i) => i.tab))]);
 const tabFromHash = (): Tab => {
   const h = window.location.hash.replace(/^#\/?/, '') as Tab;
   return ALL_TABS.has(h) ? h : 'home';
 };
 
-// Warm the most-used pages' code shortly after first paint, so the first
-// click on them is instant (the other groups warm on hover).
 const prefetchPrimary = () => {
   import('./Upload');
   import('./MedicalLeaves');
@@ -86,7 +74,7 @@ function App() {
   const [attendanceMode, setAttendanceMode] = useState<'mark' | 'register' | 'excel' | 'export'>('mark');
 
   const medicalWaiting = useMedicalWaiting(role === 'faculty' || role === 'admin' ? profile?.email ?? null : null);
-  // Live SOS alerts — null for anyone who isn't a responder/admin.
+
   const sosAlerts = useActiveSos(role === 'faculty' || role === 'admin');
   const sosOpen = sosAlerts?.filter((a) => a.status === 'open').length ?? 0;
   useEffect(() => {
@@ -108,8 +96,6 @@ function App() {
     return () => window.removeEventListener('popstate', onPop);
   }, []);
 
-  // Fire once, shortly after first paint — not immediately, so it never
-  // competes with the initial page render for bandwidth/CPU.
   useEffect(() => {
     const id = setTimeout(prefetchPrimary, 1200);
     return () => clearTimeout(id);
@@ -118,9 +104,7 @@ function App() {
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       setUser(firebaseUser);
-      // Returning faculty: open the portal straight away with the role saved
-      // in this browser, then confirm it with the server in the background.
-      // (The database rules still check every read and write.)
+
       const cacheKey = firebaseUser ? `cg-portal-profile:${firebaseUser.uid}` : '';
       let cached: { role: string | null; profile: Profile } | null = null;
       if (firebaseUser) {
@@ -142,13 +126,10 @@ function App() {
           const data = userDoc.exists()
             ? (userDoc.data() as { role?: string; name?: string; email?: string; isAdmin?: boolean })
             : null;
-          // isAdmin (set only by scripts/make-admin.js) gives full admin
-          // access on top of the account's normal role — e.g. a student
-          // who runs the app keeps their student profile in the app.
+
           const nextRole = data?.isAdmin === true ? 'admin' : data?.role ?? null;
           setRole(nextRole);
-          // The medical-leave rules match on the email stored on the
-          // profile, so that's the one used for the badge too.
+
           const email = (data?.email ?? firebaseUser.email ?? '').toLowerCase();
           const nextProfile = { name: data?.name?.trim() || firebaseUser.displayName || email, email };
           setProfile(nextProfile);
@@ -169,9 +150,7 @@ function App() {
           }
         }
       } catch {
-        // Offline / transient failure: keep the saved role if there is one;
-        // otherwise treat as "no role" (shows Access denied with a log-out
-        // option) instead of hanging on Loading…
+
         if (!cached) setRole(null);
       } finally {
         setCheckingAuth(false);
@@ -193,10 +172,6 @@ function App() {
     return <Login />;
   }
 
-  // Admin included here too, not just faculty — every rule this portal's
-  // writes go through (firestore.rules) already treats admin as a
-  // superset of faculty everywhere else in the app; the portal's own
-  // login gate was the one place that inconsistently excluded it.
   if (role !== 'faculty' && role !== 'admin') {
     return (
       <>
@@ -236,7 +211,7 @@ function App() {
       <HelpButton role={role} name={me.name} email={me.email} currentPage={pageTitle} />
 
       <main className="main">
-        {/* Phones: compact bar with the menu button; the sidebar slides in. */}
+
         <div className="topbar">
           <button type="button" className="icon-button" onClick={() => setMenuOpen(true)} aria-label="Open menu">
             <Icon name="menu" size={22} />

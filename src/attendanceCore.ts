@@ -1,14 +1,4 @@
-// Everything attendance-related that is plain logic (no Firestore): class
-// grouping, session ids, holiday/date checks, the Excel register parser and
-// the semester export layout. Shared by Mark directly, Upload Excel register
-// and Download semester, so all three agree on what a "class", a "session"
-// and a percentage are — and the parser can be tested on its own.
-//
-// Storage (unchanged shape, a few optional fields added): one doc per
-// class-branch + subject + date + lecture in `attendanceSessions`, holding
-// only the absentees. Doc id:  CSE_2026_CSE D_CS101_2026-08-12   (lecture 1)
-//                               CSE_2026_CSE D_CS101_2026-08-12_L2 (2nd class that day)
-// The mobile app computes each student's percentage from the same docs.
+
 
 export type RosterEntry = {
   regNo: string;
@@ -22,11 +12,6 @@ export type RosterEntry = {
 
 export const isPg = (e: { regNo: string; program?: string }) => e.program === 'PG' || /^PG/i.test(e.regNo);
 
-// ---------------------------------------------------------------------------
-// Batches and classes
-// ---------------------------------------------------------------------------
-
-// B.Tech and M.Tech students admitted the same year are separate batches.
 export type Batch = { key: string; year: number; pg: boolean };
 
 export function deriveBatches(roster: RosterEntry[]): Batch[] {
@@ -49,19 +34,14 @@ export function batchLabel(b: Batch, today = new Date()): string {
   return `${prog} ${suffix} Year (${b.year})`;
 }
 
-// A class is a SECTION, not a branch+section: 1st-year MNC students sit in
-// "CSE D" with CSE students, and one teacher marks them together. Each
-// (branch, section) pair still gets its own session doc, because the app
-// and the security rules look a student's attendance up by their own
-// branch + section.
 export type ClassGroup = {
   key: string;
   label: string;
   section: string | null;
   targets: { branch: string; section: string | null }[];
-  students: RosterEntry[]; // sorted by reg. no.
+  students: RosterEntry[];
   specializations: string[];
-  mainBranch: string; // the branch most students belong to (for curriculum)
+  mainBranch: string;
 };
 
 const BRANCH_WORD = /\b(CSE|ECE|MNC)\b/i;
@@ -95,10 +75,6 @@ export function deriveClasses(roster: RosterEntry[], batch: Batch): ClassGroup[]
     .sort((a, b) => a.label.localeCompare(b.label));
 }
 
-// ---------------------------------------------------------------------------
-// Semesters and dates
-// ---------------------------------------------------------------------------
-
 export function currentSemester(admissionYear: number, pg: boolean, today = new Date()): number {
   const odd = today.getMonth() >= 6;
   const idx = odd ? today.getFullYear() - admissionYear : today.getFullYear() - admissionYear - 1;
@@ -108,7 +84,6 @@ export function currentSemester(admissionYear: number, pg: boolean, today = new 
 
 export const semesterOptions = (pg: boolean) => (pg ? [1, 2, 3, 4] : [1, 2, 3, 4, 5, 6, 7, 8]);
 
-// Odd semesters run July–December, even ones January–June.
 export function semesterWindow(admissionYear: number, semester: number): { from: string; to: string } {
   const startYear = admissionYear + Math.floor((semester - 1) / 2);
   return semester % 2 === 1
@@ -139,8 +114,6 @@ export function prettyDate(iso: string): string {
   });
 }
 
-// Same list as the app's academic calendar / functions/src/holidays.ts.
-// Ad-hoc holidays added from the Holidays page are passed in separately.
 const FIXED_HOLIDAYS: Record<string, string> = {
   '2026-01-26': 'Republic Day', '2026-03-04': 'Holi', '2026-03-21': 'Id-ul-Fitr',
   '2026-03-31': 'Mahavir Jayanti', '2026-04-03': 'Good Friday', '2026-05-01': 'Buddha Purnima',
@@ -158,8 +131,6 @@ export function holidayName(iso: string, extra?: Map<string, string>): string | 
   return FIXED_HOLIDAYS[iso] ?? extra?.get(iso) ?? BREAKS.find((b) => iso >= b.from && iso <= b.to)?.name ?? null;
 }
 
-// Things worth a second look before saving a date (not blockers — a make-up
-// class can genuinely happen on a Saturday).
 export function dateWarnings(iso: string, ctx: { holidays?: Map<string, string>; window?: { from: string; to: string } }): string[] {
   const out: string[] = [];
   const h = holidayName(iso, ctx.holidays);
@@ -171,10 +142,6 @@ export function dateWarnings(iso: string, ctx: { holidays?: Map<string, string>;
   return out;
 }
 
-// ---------------------------------------------------------------------------
-// Session documents
-// ---------------------------------------------------------------------------
-
 export type SessionDoc = {
   branch: string;
   admissionYear: number;
@@ -182,17 +149,16 @@ export type SessionDoc = {
   subjectCode: string;
   subjectName: string;
   date: string;
-  lecture?: number; // 1 when missing (older records)
+  lecture?: number;
   semester?: number;
-  specialization?: string | null; // set when only part of the section takes it
-  // Labs / workshops: how long the class was (a 2-hour lab counts as 2), and
-  // which students it was for when the class is split into lab batches.
+  specialization?: string | null;
+
   hours?: number;
   kind?: 'lecture' | 'lab';
   onlyEnrollmentNumbers?: string[];
   batchLabel?: string;
   absentEnrollmentNumbers: string[];
-  excusedEnrollmentNumbers?: string[]; // OD / leave — counted as attended
+  excusedEnrollmentNumbers?: string[];
   classSize?: number;
   source?: 'portal' | 'excel' | 'app';
   markedBy: string;
@@ -202,14 +168,10 @@ export type SessionDoc = {
 
 export const weightOf = (d: { hours?: number }) => Math.max(1, Math.round(d.hours ?? 1));
 
-// Whether a session counts for this student at all (another specialization
-// or the other lab batch → not their class).
 export const isFor = (d: SessionDoc, s: { regNo: string; specialization?: string | null }) =>
   !(d.specialization && d.specialization !== s.specialization) &&
   !(d.onlyEnrollmentNumbers && d.onlyEnrollmentNumbers.length && !d.onlyEnrollmentNumbers.includes(s.regNo));
 
-// Splits a lab into batches by reg. no. order. "1-35, 40, 101-110" style
-// ranges match the trailing number of the reg. no.
 export function pickBatch(students: RosterEntry[], spec: string): RosterEntry[] {
   const sorted = [...students].sort((a, b) => a.regNo.localeCompare(b.regNo));
   const half = Math.ceil(sorted.length / 2);
@@ -237,12 +199,7 @@ export function sessionDocId(p: {
 
 export const normCode = (c: string) => String(c ?? '').replace(/\s+/g, '').toUpperCase();
 
-// Doc ids can't contain "/" — subject codes typed by hand sometimes do.
 export const safeCode = (c: string) => normCode(c).replace(/\//g, '-');
-
-// ---------------------------------------------------------------------------
-// Reg. no. matching (typed roll numbers and Excel rows)
-// ---------------------------------------------------------------------------
 
 export type RegMatch =
   | { kind: 'ok'; student: RosterEntry }
@@ -256,7 +213,7 @@ export function matchReg(raw: unknown, classStudents: RosterEntry[], wholeRoster
   const token = cleanReg(raw);
   const exact = classStudents.find((s) => s.regNo.toUpperCase() === token);
   if (exact) return { kind: 'ok', student: exact };
-  // "114" or "CSE114" → the one student in this class whose number ends that way.
+
   if (/\d/.test(token)) {
     const suffix = classStudents.filter((s) => s.regNo.toUpperCase().endsWith(token));
     if (suffix.length === 1) return { kind: 'ok', student: suffix[0] };
@@ -267,10 +224,6 @@ export function matchReg(raw: unknown, classStudents: RosterEntry[], wholeRoster
   return { kind: 'unknown', token };
 }
 
-// ---------------------------------------------------------------------------
-// Excel register parser
-// ---------------------------------------------------------------------------
-
 const MONTHS: Record<string, number> = {
   jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, sept: 9, oct: 10, nov: 11, dec: 12,
 };
@@ -279,11 +232,8 @@ const normHeader = (h: unknown) => String(h ?? '').toLowerCase().replace(/[\s._/
 const REG_HEADERS = ['regno', 'enrollment', 'enrolment', 'rollno', 'registrationno', 'registrationnumber', 'admissionno', 'studentid'];
 const NAME_HEADERS = ['name', 'studentname', 'fullname'];
 
-// Turns one header cell into {date, lecture?}. `yearFor(month)` supplies the
-// year when the header has none ("12 Aug", "12/08").
 export function parseDateHeader(v: unknown, yearFor: (month: number) => number): { date: string; lecture?: number } | null {
-  // Excel date serial (the sheet is read with raw values, so dates arrive
-  // as numbers — no timezone shift).
+
   if (typeof v === 'number') {
     if (v < 40000 || v > 60000) return null;
     const d = new Date(Date.UTC(1899, 11, 30) + Math.floor(v + 1e-6) * 86400000);
@@ -294,7 +244,6 @@ export function parseDateHeader(v: unknown, yearFor: (month: number) => number):
   let s = v.trim();
   if (!s) return null;
 
-  // "12/08 L2", "12-08-2026 (2)", "Lecture 2 - 12 Aug"
   let lecture: number | undefined;
   const lec = /(?:\bL|lec(?:ture)?\s*|\()\s*([1-9])\)?\s*$/i.exec(s) ?? /^(?:L|lec(?:ture)?)\s*([1-9])\b/i.exec(s);
   if (lec) {
@@ -310,7 +259,7 @@ export function parseDateHeader(v: unknown, yearFor: (month: number) => number):
   };
   let m: RegExpExecArray | null;
   if ((m = /^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})(?:[ T].*)?$/.exec(s))) return mk(+m[1], +m[2], +m[3]);
-  // Indian order: day first.
+
   if ((m = /^(\d{1,2})[-/.](\d{1,2})[-/.](\d{2,4})$/.exec(s))) return mk(+m[3], +m[2], +m[1]);
   if ((m = /^(\d{1,2})[-/.](\d{1,2})$/.exec(s))) return mk(yearFor(+m[2]), +m[2], +m[1]);
   if ((m = /^(\d{1,2})(?:st|nd|rd|th)?[-\s/.]*([a-z]{3,9})\.?[-\s/,.']*(\d{2,4})?$/i.exec(s))) {
@@ -324,7 +273,6 @@ export function parseDateHeader(v: unknown, yearFor: (month: number) => number):
   return null;
 }
 
-// NA = not this student's class ("—" in a register downloaded from the portal).
 export type CellKind = 'P' | 'A' | 'E' | 'NA' | 'blank' | 'unknown';
 const PRESENT = new Set(['p', 'present', '1', 'y', 'yes', 'true', '✓', '✔', '✅', 'pr', 'pres']);
 const ABSENT = new Set(['a', 'ab', 'abs', 'absent', '0', 'n', 'no', 'false', 'x', '✗', '✘', '❌']);
@@ -362,7 +310,7 @@ function splitDateColumns(
   nameCol: number | null,
   yearFor: (month: number) => number,
 ): RegisterColumn[] {
-  // The month row: closest row above the header that names a month.
+
   let monthRow = -1;
   for (let r = headerRow; r >= Math.max(0, headerRow - 8); r--) {
     if ((grid[r] ?? []).some((v) => typeof v === 'string' && MONTH_CELL.test(v))) {
@@ -374,7 +322,6 @@ function splitDateColumns(
   const mrow = grid[monthRow] ?? [];
   const width = Math.max(...grid.slice(monthRow, headerRow + 30).map((r) => (r ?? []).length));
 
-  // Each month label covers the columns to its right until the next label.
   const monthOf: ({ month: number; year?: number } | null)[] = [];
   let cur: { month: number; year?: number } | null = null;
   for (let c = 0; c < width; c++) {
@@ -384,13 +331,11 @@ function splitDateColumns(
       if (m) {
         const key = m[1].toLowerCase();
         cur = { month: MONTHS[key.startsWith('sept') ? 'sep' : key.slice(0, 3)], year: m[2] ? (+m[2] < 100 ? 2000 + +m[2] : +m[2]) : undefined };
-      } else cur = null; // "Total P", "%" …
+      } else cur = null;
     }
     monthOf[c] = c === regCol || c === nameCol ? null : cur;
   }
 
-  // The day row: between the month row and the header (inclusive), the one
-  // with the most day numbers — but not a plain 1, 2, 3 … serial row.
   let best: { row: number; count: number } | null = null;
   for (let r = monthRow; r <= headerRow; r++) {
     const vals: number[] = [];
@@ -427,7 +372,6 @@ export function parseRegister(
 ): ParsedRegister | { error: string } {
   if (!grid.length) return { error: 'This sheet is empty.' };
 
-  // Header row: the first of the top 15 rows with a reg-no column.
   let headerRow = -1;
   let regCol = -1;
   let nameCol: number | null = null;
@@ -462,8 +406,6 @@ export function parseRegister(
     else skippedHeaders.push(String(h).trim());
   }
 
-  // Registers that split the date over rows: a month row ("July",
-  // "August" — often merged cells) above a row of day numbers (28, 30, 7…).
   if (columns.length < 2) {
     const split = splitDateColumns(grid, headerRow, regCol, nameCol, yearFor);
     if (split.length > columns.length) {
@@ -484,8 +426,6 @@ export function parseRegister(
     };
   }
 
-  // Lecture numbers: explicit ones stay; the rest are 1, 2, 3… in the order
-  // the same date appears (two DBMS classes on 12 Aug → lecture 1 and 2).
   const byDate = new Map<string, RegisterColumn[]>();
   columns.forEach((c) => byDate.set(c.date, [...(byDate.get(c.date) ?? []), c]));
   byDate.forEach((cols) => {
@@ -500,8 +440,6 @@ export function parseRegister(
   });
   columns.sort((a, b) => a.date.localeCompare(b.date) || a.lecture - b.lecture);
 
-  // A "Hours" row under the header (registers downloaded from the portal):
-  // how long each class was.
   for (let i = headerRow + 1; i < Math.min(grid.length, headerRow + 4); i++) {
     const r = grid[i] ?? [];
     if (![r[0], r[1], r[regCol]].some((v) => /^hours?$/i.test(String(v ?? '').trim()))) continue;
@@ -518,7 +456,7 @@ export function parseRegister(
   for (let i = headerRow + 1; i < grid.length; i++) {
     const r = grid[i] ?? [];
     const regNo = cleanReg(r[regCol]);
-    // Skip blank rows, sub-headings and totals rows ("Total present", "Avg").
+
     if (!regNo || !/\d/.test(regNo) || /^(TOTAL|AVG|AVERAGE|PRESENT|ABSENT)/.test(regNo)) continue;
     if (seen.has(regNo)) duplicateRegs.push(regNo);
     seen.add(regNo);
@@ -533,8 +471,6 @@ export function parseRegister(
   return { headerRow, regCol, nameCol, columns, skippedHeaders, rows, duplicateRegs };
 }
 
-// If a register only ever writes "P" (absent = left blank), blank means
-// absent; if it writes "A" for absences, blank means present.
 export function guessBlankMeaning(p: ParsedRegister): 'present' | 'absent' {
   let P = 0;
   let A = 0;
@@ -552,10 +488,10 @@ export type BuiltSession = {
   header: string;
   absent: RosterEntry[];
   excused: RosterEntry[];
-  na: RosterEntry[]; // not counted in this class at all
-  hours?: number; // from the sheet's Hours row
+  na: RosterEntry[];
+  hours?: number;
   present: number;
-  empty: boolean; // every cell blank — probably no class that day
+  empty: boolean;
 };
 
 export type RegisterPlan = {
@@ -585,7 +521,7 @@ export function planRegister(
     const m = matchReg(row.regNo, classStudents, wholeRoster);
     if (m.kind === 'ok') {
       if (matchedIds.has(m.student.regNo)) {
-        // Same student twice (e.g. "114" and "UG26CSE114") — last row wins.
+
         const i = matchedRows.findIndex((x) => x.student.regNo === m.student.regNo);
         matchedRows.splice(i, 1);
       }
@@ -649,10 +585,6 @@ export function planRegister(
   };
 }
 
-// ---------------------------------------------------------------------------
-// Semester export
-// ---------------------------------------------------------------------------
-
 export type ExportSubject = { code: string; name: string; sessions: SessionDoc[] };
 export type ExcusalRange = { fromDate: string; toDate: string; eventName?: string };
 type Cell = string | number | null;
@@ -661,9 +593,6 @@ export type SheetSpec = { name: string; rows: Cell[][]; widths?: number[] };
 export const LOW_ATTENDANCE = 75;
 const pct = (a: number, t: number) => (t ? Math.round((a / t) * 1000) / 10 : null);
 
-// For one student and one subject: what each session was and the totals,
-// using the same rule as the app (OD/leave and approved event excusals
-// count as attended; sessions for another specialization don't count).
 export function studentRecord(
   s: RosterEntry,
   sessions: SessionDoc[],
@@ -687,12 +616,10 @@ export function studentRecord(
     attended += w;
     return 'P';
   });
-  // attended / total are in hours (a 2-hour lab counts 2).
+
   return { marks, attended, total, classes };
 }
 
-// One column per date (+ lecture). Sessions for different branches of the
-// same section on the same date/lecture share a column.
 function columnsOf(sessions: SessionDoc[]): { key: string; label: string; docs: SessionDoc[] }[] {
   const map = new Map<string, { key: string; label: string; docs: SessionDoc[] }>();
   for (const d of sessions) {
@@ -708,7 +635,7 @@ function columnsOf(sessions: SessionDoc[]): { key: string; label: string; docs: 
 }
 
 export function buildSemesterWorkbook(params: {
-  title: string; // "B.Tech 1st Year (2026) · CSE D · Semester 1"
+  title: string;
   students: RosterEntry[];
   subjects: ExportSubject[];
   excusals: Map<string, ExcusalRange[]>;
@@ -727,7 +654,7 @@ export function buildSemesterWorkbook(params: {
   for (const subj of withData) {
     const cols = columnsOf(subj.sessions);
     const head: Cell[] = ['Reg. No.', 'Name', ...cols.map((c) => c.label), 'Attended (hrs)', 'Held (hrs)', '%'];
-    // Hours row: 1 for a lecture, 2 for a 2-hour lab. Read back on upload.
+
     const hoursRow: Cell[] = ['Hours', '', ...cols.map((c) => weightOf(c.docs[0])), '', '', ''];
     const rows: Cell[][] = [[`${subj.code} — ${subj.name}`], [params.title], [], head, hoursRow];
     for (const s of students) {
@@ -743,7 +670,7 @@ export function buildSemesterWorkbook(params: {
       agg.total += rec.total;
       if (p !== null && p < LOW_ATTENDANCE) agg.low.push(subj.code);
     }
-    // Totals row: how many were present in each class.
+
     const present: Cell[] = ['', 'Present in class', ...cols.map((c) => {
       let n = 0;
       for (const s of students) {
@@ -783,23 +710,13 @@ export function buildSemesterWorkbook(params: {
   ];
 }
 
-// ---------------------------------------------------------------------------
-// PDF registers (an Excel sheet "saved as PDF")
-// ---------------------------------------------------------------------------
-
 export type PdfTextItem = { str: string; x: number; y: number; w: number };
 
 const REG_TOKEN = /^(UG|PG)\d{2}[A-Z]{2,5}\d{2,4}$/i;
 const MONTH_WORD = /^(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?$/i;
 
-// Rebuilds the register table from the PDF's text positions: the day
-// numbers in the header give each class column's x position, every P/A on a
-// student's line goes to the column it sits under. Months come from the
-// month labels in order, moving to the next one whenever the day number
-// drops (27 Aug → 2 Sep), since PDF month labels are centred over their
-// dates rather than at the first one. Returns a grid parseRegister() reads.
 export function gridFromPdfPages(pages: PdfTextItem[][]): unknown[][] | { error: string } {
-  // Split "P P A" style items into one token each, with estimated positions.
+
   type Tok = { s: string; cx: number; y: number; page: number; x0: number };
   const toks: Tok[] = [];
   pages.forEach((items, page) => {
@@ -816,7 +733,6 @@ export function gridFromPdfPages(pages: PdfTextItem[][]): unknown[][] | { error:
     return { error: 'This PDF has no readable text — it’s probably a scan or photo. Ask the teacher for the Excel file instead.' };
   }
 
-  // Lines: same page, same baseline (±2.5pt).
   const lines: Tok[][] = [];
   for (const t of toks.sort((a, b) => a.page - b.page || b.y - a.y || a.cx - b.cx)) {
     const last = lines[lines.length - 1];
@@ -825,7 +741,6 @@ export function gridFromPdfPages(pages: PdfTextItem[][]): unknown[][] | { error:
   }
   lines.forEach((l) => l.sort((a, b) => a.cx - b.cx));
 
-  // Header: the line with the most day numbers (1–31) in a row.
   const isDay = (s: string) => /^\d{1,2}$/.test(s) && +s >= 1 && +s <= 31;
   let headerIdx = -1;
   let best = 0;
@@ -838,12 +753,11 @@ export function gridFromPdfPages(pages: PdfTextItem[][]): unknown[][] | { error:
   });
   if (headerIdx === -1 || best < 2) return { error: 'Couldn’t find the row of class dates in this PDF.' };
   const dayToks = lines[headerIdx].filter((t) => isDay(t.s));
-  // A 1, 2, 3 … serial row isn't dates.
+
   if (dayToks.length > 3 && dayToks.every((t, i) => +t.s === i + 1)) {
     return { error: 'The PDF’s header row is a 1, 2, 3 … class count, not dates. Ask for the Excel file instead.' };
   }
 
-  // Month labels: nearest lines above the header on the same page.
   const months: number[] = [];
   for (let i = headerIdx - 1; i >= 0 && lines[i][0].page === lines[headerIdx][0].page && headerIdx - i <= 4; i--) {
     const found = lines[i].filter((t) => MONTH_WORD.test(t.s));
@@ -863,7 +777,6 @@ export function gridFromPdfPages(pages: PdfTextItem[][]): unknown[][] | { error:
     return `${+t.s} ${monthNames[months[mi]]}`;
   });
 
-  // Column matching tolerance: just under half the tightest column gap.
   const xs = dayToks.map((t) => t.cx);
   const gaps = xs.slice(1).map((x, i) => x - xs[i]).filter((g) => g > 0.5);
   const tol = Math.max(2, Math.min(...gaps, 20) * 0.48);

@@ -14,19 +14,6 @@ import {
 } from 'firebase/firestore';
 import { auth, db } from './firebaseConfig';
 
-// Mirrors the mobile app's src/firebase/announcementsService.ts exactly —
-// same collection, same field names, same class-derivation logic (live
-// from `roster`, not hardcoded) — so a class picked here reaches the
-// exact same students AnnouncementsScreen's own compose form would
-// reach, and sendAnnouncementPush (already deployed) fires the same way
-// either way. This is a genuinely separate codebase from the mobile app
-// (no shared package between them), so this logic is duplicated on
-// purpose rather than imported — same convention InboxImports.tsx
-// already uses for its own copy of target-scope handling.
-// One entry in the Class dropdown. A class can hold more than one branch
-// (1st-year MNC students sit in section "CSE D" with CSE students), so it
-// carries every branch+section pair it covers and sends one announcement
-// per pair.
 type ClassOption = {
   key: string;
   label: string;
@@ -34,8 +21,6 @@ type ClassOption = {
   specializations: string[];
 };
 
-// "2026|UG" or "2026|PG" — B.Tech and M.Tech students admitted the same
-// year are separate batches with separate classes.
 type Batch = { key: string; year: number; pg: boolean };
 
 type Announcement = {
@@ -62,15 +47,6 @@ type RosterEntry = {
 const isPg = (e: RosterEntry) => e.program === 'PG' || /^PG/i.test(e.regNo);
 const inBatch = (e: RosterEntry, b: Batch) => e.admissionYear === b.year && isPg(e) === b.pg;
 
-// The whole roster is only a few hundred docs (373 as of the last real
-// count) — small enough to fetch once, in full, and derive both the year
-// list AND every year's class options entirely client-side from there.
-// The previous version ran a SEPARATE Firestore query every time a Year
-// was picked (a `where('admissionYear', '==', ...)` query on top of the
-// query that already fetched the whole roster just to list years) — that
-// second network round-trip was the actual cause of the visible "Class:
-// LOADING…" delay. One fetch, computed in memory, is instant regardless
-// of which year gets picked afterward.
 async function getRosterEntries(): Promise<RosterEntry[]> {
   const snap = await getDocs(collection(db, 'roster'));
   return snap.docs.map((d) => ({ ...(d.data() as Omit<RosterEntry, 'regNo'>), regNo: d.id }));
@@ -84,7 +60,7 @@ function deriveBatches(entries: RosterEntry[]): Batch[] {
     const key = `${e.admissionYear}|${pg ? 'PG' : 'UG'}`;
     if (!seen.has(key)) seen.set(key, { key, year: e.admissionYear, pg });
   });
-  // Newest first; B.Tech before M.Tech within a year.
+
   return Array.from(seen.values()).sort((a, b) => b.year - a.year || Number(a.pg) - Number(b.pg));
 }
 
@@ -95,7 +71,7 @@ function deriveClassOptions(entries: RosterEntry[], batch: Batch): ClassOption[]
   entries.forEach((data) => {
     if (!inBatch(data, batch) || !data.branch) return;
     const section = data.section?.trim() || null;
-    // Group by section, so "CSE D" is one class even with MNC students in it.
+
     const key = section ?? `branch:${data.branch}`;
     let opt = seen.get(key);
     if (!opt) {
@@ -158,24 +134,16 @@ function Announcements() {
   const batches = rosterEntries ? deriveBatches(rosterEntries) : [];
   const selectedBatch = batches.find((b) => b.key === selectedBatchKey) ?? null;
   const selectedYear = selectedBatch?.year ?? null;
-  // Purely computed from what's already in memory — no network round trip
-  // when the batch changes.
+
   const classOptions = rosterEntries && selectedBatch ? deriveClassOptions(rosterEntries, selectedBatch) : [];
 
   useEffect(() => {
-    // Only reset the class choice — years/classOptions themselves recompute
-    // automatically above whenever selectedYear or rosterEntries changes.
+
     setWholeYear(false);
     setSelectedClass(null);
     setSelectedSpecialization(null);
   }, [selectedBatchKey]);
 
-  // Every announcement from the last 7 days, newest first — matches the
-  // mobile app's announcementsService.ts MAX_AGE_MS exactly (a quick
-  // class announcement is only ever relevant for a few days). Enforced
-  // in the query itself, not just a client-side filter afterward —
-  // without this, this tab would re-sync the entire announcement
-  // history ever sent, forever, every time a faculty member opens it.
   useEffect(() => {
     const sevenDaysAgo = Timestamp.fromMillis(Date.now() - 7 * 24 * 60 * 60 * 1000);
     const q = fsQuery(
@@ -217,19 +185,7 @@ function Announcements() {
         createdAt: serverTimestamp(),
       };
       if (wholeYear) {
-        // One doc per branch, not one branch-agnostic doc — targetBranch
-        // is required (Firestore rules enforce it's always a real, non-
-        // empty branch), so there's no single document that means "every
-        // branch". targetSection/targetSpecialization: null on each,
-        // though, means "any section/specialization within that branch"
-        // per announcementsService.ts's filter (`if (a.targetSection &&
-        // ...)` skips the check entirely when null) — so this reaches
-        // every student in the year regardless of section or
-        // specialization, across however many branches actually exist
-        // for it (derived from the same roster data, not hardcoded).
-        // Every class of this batch, by section — not "branch, any
-        // section", which would also reach M.Tech students of the same
-        // branch and year.
+
         const targets = classOptions.flatMap((c) => c.targets);
         if (targets.length === 0) {
           setError('No classes found for that batch.');

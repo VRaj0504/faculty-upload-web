@@ -11,9 +11,6 @@ function ago(ms: number) {
   return m < 1 ? 'just now' : m < 60 ? `${m} min ago` : `${Math.round(m / 60)} hr ago`;
 }
 
-// The live SOS board: every open alert with the student's details, a map of
-// their latest location (refreshed from their phone while the alert is
-// open), and the two actions a responder takes.
 export default function SosBoard({ alerts, me }: { alerts: SosAlert[] | null; me: { name: string; email: string } }) {
   const [, tick] = useState(0);
   const [busy, setBusy] = useState<string | null>(null);

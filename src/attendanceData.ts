@@ -1,5 +1,5 @@
-// Firestore side of attendance for the portal — every read and write the
-// three attendance screens make goes through here.
+
+
 import {
   collection,
   deleteDoc,
@@ -55,9 +55,6 @@ export async function loadHolidayOverrides(): Promise<Map<string, string>> {
 
 export type SubjectOption = { code: string; name: string };
 
-// Subjects for a class: the uploaded curriculum (what the app uses) plus
-// the built-in list, for every branch in the class (MNC students in CSE D
-// may have their own codes).
 export async function loadSubjects(branches: string[], semester: number): Promise<SubjectOption[]> {
   const out = new Map<string, SubjectOption>();
   for (const branch of branches) {
@@ -79,8 +76,6 @@ export async function loadSubjects(branches: string[], semester: number): Promis
   return Array.from(out.values()).sort((a, b) => a.code.localeCompare(b.code));
 }
 
-// Every session recorded for a class (all its branches), optionally one
-// subject only.
 export async function loadClassSessions(
   cls: ClassGroup,
   admissionYear: number,
@@ -117,15 +112,13 @@ export async function getSession(id: string): Promise<SessionDoc | null> {
 
 export type SessionWrite = Omit<SessionDoc, 'markedBy' | 'markedAt' | 'markedByName'>;
 
-// One class session (for a whole section) → one doc per branch in it.
 export function splitByBranch(
   cls: ClassGroup,
   base: Omit<SessionWrite, 'branch' | 'section' | 'absentEnrollmentNumbers' | 'excusedEnrollmentNumbers' | 'classSize'>,
   absent: RosterEntry[],
   excused: RosterEntry[],
   classStudents: RosterEntry[],
-  // true when classStudents is only part of the class (a lab batch): the
-  // record then lists exactly who it was for, so the rest aren't counted.
+
   partOfClass = false,
 ): (SessionWrite & { id: string })[] {
   return cls.targets
@@ -149,11 +142,11 @@ export function splitByBranch(
 export async function writeSessions(docs: (SessionWrite & { id: string })[], onProgress?: (done: number) => void) {
   const markedBy = auth.currentUser?.uid ?? 'web-portal';
   const markedByName = auth.currentUser?.displayName ?? auth.currentUser?.email ?? 'Faculty';
-  // Firestore allows 500 writes per batch.
+
   for (let i = 0; i < docs.length; i += 450) {
     const batch = writeBatch(db);
     for (const { id, ...d } of docs.slice(i, i + 450)) {
-      // Firestore rejects undefined values — drop them.
+
       const clean = Object.fromEntries(Object.entries(d).filter(([, v]) => v !== undefined));
       batch.set(doc(db, SESSIONS, id), { ...clean, markedBy, markedByName, markedAt: serverTimestamp() });
     }
@@ -166,9 +159,6 @@ export async function deleteSessions(ids: string[]) {
   await Promise.all(ids.map((id) => deleteDoc(doc(db, SESSIONS, id))));
 }
 
-// Approved event excusals (inter-IIIT events etc.) for these students, so
-// the export counts them the way the app does. Needs the Firestore rule that
-// lets faculty read approved excusals; returns an empty map without it.
 export async function loadApprovedExcusals(regNos: Set<string>): Promise<{ map: Map<string, ExcusalRange[]>; ok: boolean }> {
   const map = new Map<string, ExcusalRange[]>();
   try {

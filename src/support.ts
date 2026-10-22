@@ -1,6 +1,5 @@
-// Who faculty reach from the Help button. Change these two lines to point
-// help at whoever looks after the portal (leave phone empty to hide the
-// WhatsApp option).
+
+
 export const SUPPORT = {
   name: 'Portal support',
   email: 'collegego05@gmail.com',

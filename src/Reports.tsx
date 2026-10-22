@@ -2,8 +2,6 @@ import { useEffect, useState } from 'react';
 import { collection, deleteDoc, doc, onSnapshot, orderBy, query, Timestamp, updateDoc } from 'firebase/firestore';
 import { auth, db } from './firebaseConfig';
 
-// Student reports on Lost & Found posts (filed from the app's flag button).
-// Faculty either remove the post or dismiss the report.
 type Report = {
   id: string;
   itemId: string;
@@ -39,7 +37,7 @@ export default function Reports() {
     setError('');
     try {
       if (status === 'removed') {
-        // Already deleted by someone else is fine.
+
         await deleteDoc(doc(db, 'lostFoundItems', r.itemId)).catch(() => {});
       }
       await updateDoc(doc(db, 'reports', r.id), {

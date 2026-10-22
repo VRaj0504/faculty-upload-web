@@ -3,17 +3,6 @@ import { collection, deleteDoc, doc, getDoc, getDocs } from 'firebase/firestore'
 import { auth, db } from './firebaseConfig';
 import { FACULTY_LEGEND } from './facultyLegend';
 
-// A faculty member's timetable is NOT separate data that anyone has to
-// enter — it's already implied by every section's published timetable,
-// since each slot records who teaches it. This screen inverts that: scan
-// every timetable, keep the slots whose faculty field mentions the
-// selected person, and lay them out as that person's own week.
-//
-// Deriving it this way rather than adding a "faculty timetable" upload
-// means it can never drift out of sync with what students see, and it
-// costs the timetable committee no extra work at all. Change a class in
-// the section's timetable and the teacher's week updates with it.
-
 type Slot = {
   startTime: string;
   endTime: string;
@@ -28,25 +17,18 @@ type TimetableDoc = { id: string; branch: string; semester: number; section: str
 
 type TeachingSlot = Slot & { branch: string; semester: number; section: string; sectionKey: string; day: string };
 
-// The same section is sometimes saved under two names — "A" from one
-// import, "ECE A" from another (or "CSE2" vs "CSE 2"). Comparing this key
-// instead of the raw text treats those as one section, so the same class
-// isn't listed twice or reported as a clash with itself.
 function sectionKey(branch: string, section: string): string {
   const b = String(branch ?? '').toUpperCase().replace(/[\s_-]+/g, '');
   let s = String(section ?? '').toUpperCase().replace(/[\s_-]+/g, '');
   s = s.replace(/^(SECTION|SEC)/, '');
   if (b && s.startsWith(b)) s = s.slice(b.length);
-  return s; // '' = the branch's only section
+  return s;
 }
 
-// Two saved copies of one branch+semester+section.
 type Duplicate = { label: string; copies: TimetableDoc[]; keep: TimetableDoc | null };
 
 const WEEKDAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
 
-// Times are stored "H:MM" with the hour un-padded ("9:00"), so sorting
-// them as text puts 9:00 after 10:00. Everything here compares minutes.
 function toMinutes(time: string): number {
   const match = String(time ?? '').trim().match(/^(\d{1,2}):(\d{2})$/);
   if (!match) return -1;
@@ -63,11 +45,6 @@ function formatTime(time: string): string {
   return `${h12}:${String(m).padStart(2, '0')} ${period}`;
 }
 
-// A slot's faculty field holds initials, and often SEVERAL people for
-// one class ("ND / BP", "DR/NB/PG25CS04"). Splitting on the separators
-// and matching each part exactly avoids the trap of a substring test,
-// where searching "AP" would wrongly match "APS", "VAP" and "PAS F1"
-// and hand a teacher three colleagues' classes.
 function facultyPartsOf(faculty: string): string[] {
   return String(faculty ?? '')
     .split(/[/,&;]+/)
@@ -75,10 +52,6 @@ function facultyPartsOf(faculty: string): string[] {
     .filter(Boolean);
 }
 
-// The legend is typed with dots/spaces ("R.N", "N B") but timetables store
-// bare initials ("RN", "NB"), so an exact compare missed most teachers.
-// Same rule as the app: exact first (keeps "RK" = Rahul Patel apart from
-// "R.K." = Ritesh Kumar), then with dots/spaces/hyphens stripped.
 const looseKey = (s: string) => String(s ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
 const EXACT_KEYS = new Set(Object.keys(FACULTY_LEGEND).map((k) => k.trim().toUpperCase()));
 
@@ -87,8 +60,7 @@ function sameInitials(part: string, mine: string): boolean {
   const b = mine.trim().toUpperCase();
   if (a === b) return true;
   if (looseKey(a) !== looseKey(b)) return false;
-  // Spelled differently but the same letters: only a match if that spelling
-  // isn't itself a different person's own legend key.
+
   return !EXACT_KEYS.has(a) || !EXACT_KEYS.has(b);
 }
 
@@ -104,10 +76,6 @@ function teaches(slotFaculty: string, initials: string): boolean {
   return facultyPartsOf(slotFaculty).some((p) => sameInitials(p, initials));
 }
 
-// Which timetable initials belong to this login. An explicit
-// `facultyInitials` on the user's profile wins; otherwise the profile name
-// is matched to the legend ("Dr. Nishad Deshpande" -> ND). Only a single
-// unambiguous match counts — guessing wrong would show someone else's week.
 const nameTokens = (n: string) =>
   String(n ?? '')
     .toLowerCase()
@@ -129,14 +97,13 @@ function initialsForName(name: string): string | null {
 
 function MyTimetable({ role, name }: { role: string | null; name: string }) {
   const isAdmin = role === 'admin';
-  const [ownInitials, setOwnInitials] = useState<string | null | undefined>(undefined); // undefined = still working it out
+  const [ownInitials, setOwnInitials] = useState<string | null | undefined>(undefined);
   const [timetables, setTimetables] = useState<TimetableDoc[] | null>(null);
   const [initials, setInitials] = useState('');
   const [error, setError] = useState('');
   const [rosterSections, setRosterSections] = useState<Set<string> | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
 
-  // Work out who "me" is, then lock the screen to that person.
   useEffect(() => {
     let cancelled = false;
     const uid = auth.currentUser?.uid;
@@ -166,8 +133,7 @@ function MyTimetable({ role, name }: { role: string | null; name: string }) {
     getDocs(collection(db, 'timetable'))
       .then((snap) => setTimetables(snap.docs.map((d) => ({ ...(d.data() as Omit<TimetableDoc, 'id'>), id: d.id }))))
       .catch((err) => setError(`Could not load timetables: ${err.message}`));
-    // Which section names students actually have — tells us which of two
-    // duplicate copies is the one the app shows them.
+
     getDocs(collection(db, 'roster'))
       .then((snap) => {
         const set = new Set<string>();
@@ -220,11 +186,6 @@ function MyTimetable({ role, name }: { role: string | null; name: string }) {
     }
   }
 
-  // Every set of initials that actually appears in a real published
-  // timetable, so the picker offers who genuinely teaches rather than
-  // the whole legend (which includes people with no classes this term).
-  // Anyone teaching but missing from the legend still shows, by their
-  // initials alone, rather than being silently unselectable.
   const teachingInitials = useMemo(() => {
     if (!timetables) return [];
     const seen = new Set<string>();
@@ -238,8 +199,7 @@ function MyTimetable({ role, name }: { role: string | null; name: string }) {
     return Array.from(seen).sort((a, b) => {
       const an = legendName(a) ?? '';
       const bn = legendName(b) ?? '';
-      // Named faculty first (alphabetically), then bare codes — which are
-      // mostly TA identifiers like PG25CS07 and less useful to browse.
+
       if (an && bn) return an.localeCompare(bn);
       if (an) return -1;
       if (bn) return 1;
@@ -250,8 +210,7 @@ function MyTimetable({ role, name }: { role: string | null; name: string }) {
   const byDay = useMemo(() => {
     const result: Record<string, TeachingSlot[]> = Object.fromEntries(WEEKDAYS.map((d) => [d, []]));
     if (!timetables || !initials) return result;
-    // Prefer the copy students actually use when a section is saved twice,
-    // so its name is the one shown.
+
     const preferred = new Set(duplicates.map((d) => d.keep?.id).filter(Boolean) as string[]);
     const ordered = [...timetables].sort((a, b) => Number(preferred.has(b.id)) - Number(preferred.has(a.id)));
     const seen = new Set<string>();
@@ -263,7 +222,7 @@ function MyTimetable({ role, name }: { role: string | null; name: string }) {
           if (!teaches(slot.faculty, initials)) continue;
           const dupKey = [day.day, tt.branch, tt.semester, sKey, toMinutes(slot.startTime), toMinutes(slot.endTime),
             slot.subjectCode, slot.group ?? ''].join('|');
-          if (seen.has(dupKey)) continue; // same class from a duplicate copy
+          if (seen.has(dupKey)) continue;
           seen.add(dupKey);
           result[day.day].push({
             ...slot,
@@ -284,10 +243,6 @@ function MyTimetable({ role, name }: { role: string | null; name: string }) {
 
   const totalClasses = WEEKDAYS.reduce((sum, d) => sum + byDay[d].length, 0);
 
-  // Two sections scheduled on top of each other for the same teacher is
-  // a real scheduling error worth surfacing loudly — it means whoever
-  // built the timetable double-booked a person, and nobody would notice
-  // until the teacher had to be in two rooms at once.
   const clashes = useMemo(() => {
     const found: { day: string; a: TeachingSlot; b: TeachingSlot }[] = [];
     for (const day of WEEKDAYS) {
@@ -298,8 +253,7 @@ function MyTimetable({ role, name }: { role: string | null; name: string }) {
           const b = slots[j];
           const overlap =
             toMinutes(a.startTime) < toMinutes(b.endTime) && toMinutes(b.startTime) < toMinutes(a.endTime);
-          // Two groups of the SAME class at the same hour is normal (a
-          // split lab the teacher runs together), not a clash.
+
           const sameClass =
             a.subjectCode === b.subjectCode && a.branch === b.branch && a.semester === b.semester && a.sectionKey === b.sectionKey;
           if (overlap && !sameClass) found.push({ day, a, b });

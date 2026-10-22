@@ -17,9 +17,6 @@ import { downloadXlsx } from './xlsxTemplates';
 
 type Opts = { blank: 'present' | 'absent'; unknown: 'present' | 'absent'; missing: 'present' | 'absent' | 'skip' };
 
-// Upload an attendance register kept in Excel (one row per student, one
-// column per class date) for one subject — e.g. everything from before the
-// portal was used. Nothing is written until the preview has been checked.
 export default function AttendanceUpload() {
   const [ctx, setCtx] = useState<PickerState | null>(null);
   const [fileName, setFileName] = useState('');
@@ -27,25 +24,22 @@ export default function AttendanceUpload() {
   const [sheet, setSheet] = useState('');
   const [opts, setOpts] = useState<Opts>({ blank: 'present', unknown: 'present', missing: 'present' });
   const [guessed, setGuessed] = useState<'present' | 'absent' | null>(null);
-  const [exclude, setExclude] = useState<Set<string>>(new Set()); // "date#lecture" left out by hand
+  const [exclude, setExclude] = useState<Set<string>>(new Set());
   const [existing, setExisting] = useState<Set<string> | null>(null);
   const [onExisting, setOnExisting] = useState<'skip' | 'overwrite'>('skip');
   const [status, setStatus] = useState<{ kind: 'ok' | 'error' | 'info'; text: string } | null>(null);
   const [progress, setProgress] = useState<string>('');
-  const [inputKey, setInputKey] = useState(0); // bump to clear the file box
+  const [inputKey, setInputKey] = useState(0);
   const [fromPortal, setFromPortal] = useState(false);
 
   const ctxKey = ctx ? `${ctx.batch!.key}|${ctx.cls!.key}|${ctx.semester}|${ctx.subject?.code}|${ctx.specialization}` : '';
 
-  // How long each class in the sheet was (a lab register: 2). A portal
-  // download's Hours row overrides this per column.
   const [sheetHours, setSheetHours] = useState(1);
   useEffect(() => {
     if (ctx?.subject) setSheetHours(/\b(lab|laboratory|workshop|practical)\b/i.test(ctx.subject.name) ? 2 : 1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ctxKey]);
 
-  // Years for dates written without one ("12/08", "12 Aug") come from the semester.
   const yearFor = useMemo(() => {
     if (!ctx) return (m: number) => (m >= 7 ? new Date().getFullYear() : new Date().getFullYear());
     const w = semesterWindow(ctx.batch!.year, ctx.semester!);
@@ -69,7 +63,6 @@ export default function AttendanceUpload() {
 
   const plan = useMemo(() => (reg && ctx ? planRegister(reg, opts, ctx.students, ctx.roster) : null), [reg, ctx, opts]);
 
-  // Problems with dates, per session.
   const flags = useMemo(() => {
     const m = new Map<string, { future: boolean; empty: boolean; notes: string[] }>();
     if (!plan || !ctx) return m;
@@ -84,7 +77,6 @@ export default function AttendanceUpload() {
     return m;
   }, [plan, ctx]);
 
-  // Which of these classes already have attendance saved.
   const idsFor = (date: string, lecture: number) =>
     ctx ? ctx.cls!.targets.map((t) => sessionDocId({ branch: t.branch, admissionYear: ctx.batch!.year, section: t.section, subjectCode: ctx.subject!.code, date, lecture })) : [];
   useEffect(() => {
@@ -120,7 +112,7 @@ export default function AttendanceUpload() {
     setFileName(file.name);
     try {
       if (/\.pdf$/i.test(file.name) || file.type === 'application/pdf') {
-        // A register saved as PDF: rebuild the table from the text positions.
+
         const { getPdfjs } = await import('./timetableImport');
         const pdfjs = await getPdfjs();
         const pdf = await pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
@@ -156,12 +148,11 @@ export default function AttendanceUpload() {
         return;
       }
       setBook({ names, grids });
-      // A register downloaded from this portal (Summary + Key sheets): it's
-      // an update, so its classes replace what's saved.
+
       const fromPortal = names.includes('Key') && names.includes('Summary');
       setOnExisting(fromPortal ? 'overwrite' : 'skip');
       setFromPortal(fromPortal);
-      // Pick the sheet for this subject, else the one naming this section, else the first.
+
       const flat = (x: string) => x.replace(/[\s_-]+/g, '').toLowerCase();
       const code = flat(ctx?.subject?.code ?? '');
       const label = flat(ctx?.cls?.section ?? '');
@@ -203,8 +194,7 @@ export default function AttendanceUpload() {
         },
         s.absent,
         s.excused,
-        // "—" cells / students left out of a lab batch sheet: the class was
-        // only for the rest, so they aren't counted at all.
+
         s.na.length ? ctx.students.filter((st) => !s.na.includes(st)) : ctx.students,
         s.na.length > 0,
       ),
@@ -338,7 +328,6 @@ export default function AttendanceUpload() {
                 )}
               </div>
 
-              {/* Everything that needs a look, in one place */}
               <div className="att-issues">
                 {plan.missingFromSheet.length > 0 && (
                   <p className="notice att-warn">

@@ -19,18 +19,14 @@ const MAX_FILE_MB = 50;
 
 type BranchCode = typeof BRANCHES[number];
 
-// A course offered to every branch in a semester, with each branch's own
-// code + name for it (they're not always spelled the same).
 type CommonSubject = {
-  key: string; // the CSE course code — unique, used as the <option> value
+  key: string;
   name: string;
   perBranch: Record<BranchCode, { code: string; name: string }>;
 };
 
 const normName = (s: string) => s.trim().toLowerCase().replace(/\s+/g, ' ');
 
-// Subject names like "Advanced AI/ML" contain "/", which would add an
-// extra folder level to the Storage path. Keep the path one segment.
 const pathSafe = (s: string) => s.replace(/[/\\#?[\]*]+/g, '-');
 
 type MyResource = {
@@ -48,34 +44,21 @@ function Upload() {
   const [title, setTitle] = useState('');
   const [branch, setBranch] = useState<typeof BRANCHES[number]>('CSE');
   const [allBranches, setAllBranches] = useState(false);
-  // Which branches a "common subject" goes to. Few subjects are shared by
-  // all three (CSE, ECE, MNC): Computer Organization is CSE + ECE, OOP and
-  // DBMS are CSE + MNC. So the list below is whatever the CHOSEN branches
-  // have in common, not the intersection of all three.
+
   const [commonBranches, setCommonBranches] = useState<BranchCode[]>([...BRANCHES]);
   const [semester, setSemester] = useState<typeof SEMESTERS[number]>(1);
-  // '' means "whole semester, every section" — the previous (and still
-  // correct) default for anything not aimed at one specific section.
+
   const [section, setSection] = useState('');
   const [subject, setSubject] = useState('');
   const [customSubject, setCustomSubject] = useState('');
-  // Which option is picked in the "common subject" dropdown — either a
-  // real subject name from the cross-branch intersection, or the
-  // OTHER_OPTION sentinel, which reveals the free-text fallback input.
+
   const [commonSubjectChoice, setCommonSubjectChoice] = useState('');
   const [type, setType] = useState<typeof TYPES[number]>('Notes');
-  // Which cohort this material belongs to. Notes/Slides are only shown
-  // to students in this same academic year (PYQs carry forward to every
-  // future batch), so getting this right is what stops next year's
-  // juniors inheriting this year's entire pile.
+
   const [academicYear, setAcademicYear] = useState<string>(currentAcademicYear());
-  // The year an exam paper was HELD — required for PYQs and deliberately
-  // not defaulted, since a silent default would file papers under the
-  // wrong year without anyone noticing. '' = not picked yet.
+
   const [examYear, setExamYear] = useState<number | ''>('');
-  // The published timetables for the chosen branch + semester, used only
-  // to tell whether the chosen subject has a lab (Assignments are only
-  // for subjects that do). null = not loaded / not applicable.
+
   const [semesterTimetables, setSemesterTimetables] = useState<any[] | null>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
@@ -84,35 +67,8 @@ function Upload() {
   const [myResources, setMyResources] = useState<MyResource[]>([]);
   const [myResourcesError, setMyResourcesError] = useState('');
 
-  // Depends on branch + semester. When "applies to all branches" is checked,
-  // different branches can have different curricula for the same semester,
-  // so there's no single dropdown that's correct for all of them — the
-  // faculty types the subject name directly instead (matched by name, not
-  // code, everywhere else in the app anyway).
   const subjectOptions = curriculum[branch]?.[semester] ?? [];
 
-  // Subjects that exist under the EXACT same name in every branch for
-  // this semester — early semesters share most of their curriculum
-  // (Engineering Physics, Communication Skills, etc.), so "common
-  // subject" doesn't actually mean "no dropdown is possible", it means
-  // "the dropdown has to be the intersection, not one branch's list".
-  // Free text is still offered as a fallback (via the "Other" option
-  // below) for whatever doesn't overlap, but defaulting to this
-  // dropdown when something DOES overlap avoids reintroducing exactly
-  // the subject-name-spelling mismatches a free-text field invites —
-  // the same class of bug the PYQ bulk-upload script spent a lot of
-  // effort correcting for after the fact.
-  //
-  // Matched by course CODE (or, failing that, by name ignoring case and
-  // spacing) — NOT by exact name. The same course is spelled differently
-  // per branch in the curriculum: CS101 is "Fundamentals of Computer & C
-  // Programming" for CSE/MNC but "Fundamentals of Computers &
-  // Programming" for ECE, CS201 is "Data Structures…" vs "Data
-  // Structure…", etc. Exact-name matching silently dropped those from
-  // this list. Each option also remembers every branch's OWN name for the
-  // course, because the student app files a resource under a subject by
-  // that branch's curriculum name — saving the CSE spelling for ECE would
-  // land it in ECE students' "Other" folder.
   const baseBranch: BranchCode | undefined = commonBranches[0];
   const commonSubjectOptions: CommonSubject[] = baseBranch
     ? (curriculum[baseBranch][semester] ?? []).flatMap((baseSubject) => {
@@ -142,10 +98,7 @@ function Upload() {
 
   useEffect(() => {
     if (!allBranches) return;
-    // Re-picks whenever the semester changes (the intersection is
-    // different per semester) — defaults to the first common subject
-    // when one exists, falls back to the free-text "Other" option when
-    // nothing overlaps for this semester at all.
+
     setCommonSubjectChoice(commonSubjectOptions.length > 0 ? commonSubjectOptions[0].key : OTHER_OPTION);
   }, [semester, allBranches, commonBranches.join(',')]);
 
@@ -169,10 +122,7 @@ function Upload() {
         setMyResources(items);
       },
       (err) => {
-        // A `where` + `orderBy` on different fields needs a composite
-        // Firestore index. The first time this query runs, Firebase logs a
-        // console error with a direct "create it" link — surfacing that
-        // here instead of failing silently, like it did before.
+
         console.error('My Uploads query failed:', err);
         setMyResourcesError(
           'Could not load your uploads. Open the browser console (F12) — Firebase usually prints a link there to create a missing index; click it, wait a minute, then reload.'
@@ -183,10 +133,6 @@ function Upload() {
     return () => unsubscribe();
   }, []);
 
-  // Load this branch+semester's published timetables so the form can tell
-  // whether the picked subject has a lab. Skipped for "all branches",
-  // where different branches can schedule the same subject differently
-  // and there is no single answer.
   useEffect(() => {
     if (allBranches) {
       setSemesterTimetables(null);
@@ -198,8 +144,7 @@ function Upload() {
         if (!cancelled) setSemesterTimetables(snap.docs.map((d) => d.data()));
       })
       .catch(() => {
-        // Can't tell -> don't block anything. Failing to read the
-        // timetable must never stop someone uploading.
+
         if (!cancelled) setSemesterTimetables(null);
       });
     return () => {
@@ -212,12 +157,9 @@ function Upload() {
     allBranches || !selectedSubjectCode || semesterTimetables === null
       ? 'unknown'
       : labStatusFor(selectedSubjectCode, semesterTimetables);
-  // Only a definite "scheduled, but never with a lab" blocks Assignments.
-  // Unknown (no timetable yet, subject unscheduled) stays allowed.
+
   const assignmentBlocked = labStatus === 'no-lab';
 
-  // If the subject changes to one without a lab while "Assignment" is
-  // selected, fall back to Notes rather than leaving an invalid choice.
   useEffect(() => {
     if (type === 'Assignment' && assignmentBlocked) setType('Notes');
   }, [type, assignmentBlocked]);
@@ -227,9 +169,7 @@ function Upload() {
     const effectiveSubject = allBranches
       ? (usingCustom ? customSubject.trim() : selectedCommon?.name ?? '')
       : subject;
-    // What each branch's resource doc gets: that branch's OWN curriculum
-    // name + code for the course, so the student app files it in the
-    // right subject folder for every branch.
+
     const subjectFor = (b: BranchCode): { subject: string; subjectCode: string | null } => {
       if (!allBranches) return { subject, subjectCode: selectedSubjectCode };
       if (usingCustom || !selectedCommon) return { subject: effectiveSubject, subjectCode: null };
@@ -251,18 +191,12 @@ function Upload() {
       setMessage('This subject has no lab in the timetable, so it has no assignments.');
       return;
     }
-    // A single file keeps requiring the typed title, exactly as before —
-    // for a batch, each file's own name becomes its title instead (see
-    // below), so the one shared title field wouldn't even apply.
+
     if (files.length === 1 && !title) {
       setMessage('Please fill in all fields and choose a file.');
       return;
     }
-    // Check every file's size up front, before uploading anything — for
-    // a batch of ~20, finding out file 18 was oversized only after
-    // waiting through 17 successful uploads would be a genuinely bad
-    // experience; failing fast here means either everything proceeds or
-    // nothing does.
+
     const oversized = files.filter((f) => f.size > MAX_FILE_MB * 1024 * 1024);
     if (oversized.length > 0) {
       setMessage(
@@ -279,12 +213,6 @@ function Upload() {
       const targetBranches: readonly BranchCode[] = allBranches ? commonBranches : [branch];
       const stripExtension = (filename: string) => filename.replace(/\.[^.]+$/, '');
 
-      // Sequential, not Promise.all — with a batch of ~20 files, running
-      // every upload at once would contend for the same upload bandwidth
-      // anyway (no real speed win) while making per-file progress
-      // meaningless to show and one slow/failed file harder to isolate.
-      // One at a time keeps the progress bar honest and keeps a single
-      // failure from obscuring which specific file caused it.
       for (let i = 0; i < files.length; i++) {
         const currentFile = files[i];
         setUploadFileIndex(i + 1);
@@ -356,10 +284,7 @@ function Upload() {
     if (!confirm(`Delete "${item.title}"? This can't be undone.`)) return;
 
     try {
-      // A "common subject" upload is ONE file shared by a resource doc per
-      // branch. Deleting the file along with the first doc used to leave
-      // the other branches' copies pointing at a deleted file. Only remove
-      // the file once no other resource still uses it.
+
       await deleteDoc(doc(db, 'resources', item.id));
       if (item.storagePath) {
         const stillUsed = await getDocs(
@@ -367,7 +292,7 @@ function Upload() {
         );
         if (stillUsed.empty) {
           await deleteObject(ref(storage, item.storagePath)).catch((e: any) => {
-            // Already gone is fine — the goal state is reached.
+
             if (e?.code !== 'storage/object-not-found') throw e;
           });
         }
@@ -405,7 +330,7 @@ function Upload() {
 
       <div className="res-grid">
         <div className="card res-form">
-          {/* 1 — where it goes */}
+
           <section className="res-step">
             <div className="res-step-head">
               <span className="res-step-num">1</span>
@@ -459,7 +384,6 @@ function Upload() {
             )}
           </section>
 
-          {/* 2 — what it is */}
           <section className="res-step">
             <div className="res-step-head">
               <span className="res-step-num">2</span>
@@ -468,11 +392,7 @@ function Upload() {
                 <p>Where it shows up in the student's Resources folders.</p>
               </div>
             </div>
-            {/* Subject — dropdown from curriculum.ts for a single branch.
-                For "common subject" (all branches), also a dropdown where
-                possible — the cross-branch intersection for this semester —
-                with free text only when a subject genuinely isn't shared,
-                via the explicit "Other" option below. */}
+
             <div>
               <label>Subject</label>
               {allBranches ? (
@@ -568,7 +488,6 @@ function Upload() {
             </p>
           </section>
 
-          {/* 3 — the file */}
           <section className="res-step">
             <div className="res-step-head">
               <span className="res-step-num">3</span>

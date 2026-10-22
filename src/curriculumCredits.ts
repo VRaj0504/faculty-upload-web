@@ -1,6 +1,5 @@
-// Credits per course code, read from the 2025 CSE / ECE and MnC curriculum PDFs.
-// Only used when the Firestore `curriculum` collection has nothing for a
-// branch + semester (e.g. MNC), so grades still carry the right credits.
+
+
 export const COURSE_CREDITS: Record<string, number> = {
   AS101: 4,
   AS102: 2,

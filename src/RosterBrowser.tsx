@@ -9,18 +9,11 @@ type RosterRow = {
   branch: string;
   section: string;
   admissionYear: number;
-  // Absent means UG everywhere this is read — see getCurrentSemester
-  // below, which mirrors the mobile app's src/utils/academicInfo.ts.
+
   program?: 'UG' | 'PG';
   specialization?: string;
 };
 
-// A student's roster entry is just the roster/allowlist data (set before
-// they ever open the app). Contact details only exist once they've
-// actually signed up — that live account doc is looked up separately, by
-// enrollmentNumber, when a preview is opened, rather than joined here for
-// every row up front (200+ extra reads on every roster load for details
-// most rows won't ever have opened).
 type StudentAccount = {
   email?: string;
   phone?: string;
@@ -28,12 +21,6 @@ type StudentAccount = {
 
 const PAGE_SIZE = 200;
 
-// Same odd/even semester math as the mobile app's academicInfo.ts —
-// IIIT Surat's odd semesters (1,3,5,7) start around July, even ones
-// around January. `program` caps the result at 4 (PG/M.Tech, 2 years)
-// instead of 8 (UG, 4 years) — this file had its own separate copy of
-// this function that went un-updated when that program-awareness fix
-// was made to the main app; kept in sync now.
 function getCurrentSemester(admissionYear: number, today: Date = new Date(), program: 'UG' | 'PG' = 'UG'): number {
   const currentMonth = today.getMonth() + 1;
   const currentYear = today.getFullYear();
@@ -100,12 +87,6 @@ function RosterBrowser() {
     loadRoster();
   }, []);
 
-  // Narrowed by the current Program filter — with PG selected, this
-  // stops offering branches like MNC that no PG student is actually
-  // in, which would otherwise just be a selectable option that always
-  // returns zero results. Not narrowed the other way (branch doesn't
-  // narrow the Program list) since with only two programs total, that
-  // direction isn't worth the complexity.
   const branches = useMemo(() => {
     const relevant = programFilter === 'All' ? rows : rows.filter((r) => (r.program ?? 'UG') === programFilter);
     const set = new Set(relevant.map((r) => r.branch).filter(Boolean));
@@ -117,17 +98,11 @@ function RosterBrowser() {
     return ['All', ...Array.from(set).sort((a, b) => b - a).map(String)];
   }, [rows]);
 
-  // Data-driven, same as branches/years above — only actually offers
-  // 'PG' as an option once at least one PG student exists in the
-  // roster, rather than always showing a filter with nothing behind it.
   const programs = useMemo(() => {
     const hasPg = rows.some((r) => r.program === 'PG');
     return hasPg ? ['All', 'UG', 'PG'] : ['All'];
   }, [rows]);
 
-  // Same narrowing as branches above — PG only ever goes to semester
-  // 4, so offering 5-8 while PG is selected would just be four options
-  // that are guaranteed to show nothing.
   const semesters = useMemo(() => {
     const max = programFilter === 'PG' ? 4 : 8;
     return ['All', ...Array.from({ length: max }, (_, i) => String(i + 1))];
@@ -294,11 +269,7 @@ function RosterBrowser() {
                 style={{ flex: '1 1 140px' }}
                 value={programFilter}
                 onChange={(e) => {
-                  // Branch and Semester are about to be recomputed
-                  // (narrower, for PG) — a stale selection they no
-                  // longer contain would otherwise sit there
-                  // silently still applied, filtering to zero
-                  // results with no visible explanation.
+
                   setProgramFilter(e.target.value);
                   setBranchFilter('All');
                   setSemFilter('All');

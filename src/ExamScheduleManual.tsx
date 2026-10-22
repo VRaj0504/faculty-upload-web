@@ -16,17 +16,8 @@ import { uploadExamSheetPdf } from './examPdf';
 import ExamEditor from './ExamEditor';
 import { examClassTemplate, readSheetRows } from './xlsxTemplates';
 
-// MNC students are shown the CSE sheet in the student app (same rule the
-// timetable already uses), so faculty only ever choose CSE, ECE, or —
-// for exams both branches sit together for, which the real Sept 2026
-// date sheet had several of (Computer Organization and Architecture,
-// Programming for Problem Solving, ...) — Both, which publishes the
-// exact same entries to both branches' sheets in one go instead of
-// making faculty fill in and publish the identical rows twice.
 const SEMESTERS = [1, 2, 3, 4, 5, 6, 7, 8] as const;
 
-// One class at a time, from an Excel/CSV sheet or typed in by hand. The
-// whole-college PDF upload lives in ExamPdfImport.tsx.
 function ExamScheduleManual() {
   const [branch, setBranch] = useState('');
   const [semester, setSemester] = useState('');
@@ -44,9 +35,6 @@ function ExamScheduleManual() {
   const ready = !!branch && !!semester && !!examType;
   const examLabel = EXAM_TYPES.find((t) => t.id === examType)?.label ?? '';
 
-  // Picking a class + exam type loads whatever is already published for it,
-  // so the tab doubles as the correction tool (same idea as the Timetable
-  // Editor) — no separate "edit" flow, just open it, fix a row, save again.
   useEffect(() => {
     setAttachFile(null);
     if (!ready) {
@@ -56,11 +44,7 @@ function ExamScheduleManual() {
       setSourcePdf(null);
       return;
     }
-    // "Both" writes two separate docs, which could already hold two
-    // DIFFERENT sheets (e.g. if this exam used to be branch-specific) —
-    // there's no single "existing" version to load, so this is
-    // publish-only for Both. Editing what's already published still
-    // works, just pick CSE or ECE individually to do it.
+
     if (isMultiBranch(branch)) {
       setEntries([]);
       setExisting(false);
@@ -116,8 +100,6 @@ function ExamScheduleManual() {
     }
   };
 
-  // A real .xlsx, already listing this semester's subjects — faculty only
-  // fill in dates and times, so codes and names can't be mistyped.
   const downloadTemplate = () => {
     examClassTemplate({ branch, semester: Number(semester), examLabel }).catch((e) =>
       setStatus(`Couldn't make the template: ${e.message}`),
@@ -145,8 +127,7 @@ function ExamScheduleManual() {
     setSaving(true);
     setStatus('Saving...');
     try {
-      // Re-saving rows must not silently drop the attached PDF: keep the
-      // one already on the sheet unless a new one was chosen.
+
       const pdf = attachFile ? await uploadExamSheetPdf(attachFile) : sourcePdf;
       const cleanEntries = sortEntries(entries).map((e) => ({
         date: e.date,
@@ -156,10 +137,7 @@ function ExamScheduleManual() {
         subjectName: e.subjectName.trim(),
         venue: e.venue.trim(),
       }));
-      // Same entries, same attached PDF, written to each real branch's
-      // OWN doc — Firestore never stores "BOTH" as a branch value, only
-      // CSE and ECE, which is what every other screen already expects.
-      // One after another, in order (see branchesOf).
+
       for (const b of targetBranches) {
         await setDoc(doc(db, 'examSchedules', examDocId(b, Number(semester), examType)), {
             branch: b,
@@ -293,7 +271,7 @@ function ExamScheduleManual() {
             entries={entries}
             onChange={(next) => {
               setEntries(next);
-              if (next.length !== entries.length) setProblemRows([]); // row numbers shifted
+              if (next.length !== entries.length) setProblemRows([]);
             }}
             problemRows={problemRows}
             onRowEdited={(n) => setProblemRows((prev) => prev.filter((r) => r !== n))}

@@ -2,19 +2,13 @@ import { useEffect, useState } from 'react';
 import { collection, query, where, orderBy, limit, onSnapshot, getDocs, doc, updateDoc, serverTimestamp, Timestamp } from 'firebase/firestore';
 import { auth, db } from './firebaseConfig';
 
-// Mirrors the mobile app's src/screens/ComplaintsScreen.tsx and
-// src/firebase/complaintService.ts exactly — same collection, same field
-// names — so resolving a complaint from here triggers
-// sendComplaintResolutionPush (already deployed) the same way resolving
-// it from the mobile app would.
 type IssueType = 'complaint' | 'doubt';
 type Complaint = {
   id: string;
   studentUid: string;
   studentName: string;
   studentEnrollmentNumber?: string;
-  // Missing on docs written before this field existed — read as
-  // "complaint" wherever it's used below, never left undefined.
+
   type?: IssueType;
   category: 'Facilities' | 'Harassment' | 'Academic' | 'Other' | 'Coursework' | 'Exam';
   facultyEmail?: string | null;
@@ -24,9 +18,7 @@ type Complaint = {
   status: 'pending' | 'resolved' | 'rejected';
   facultyRemark: string | null;
   createdAt: Timestamp | null;
-  // Set by handleResolve below — declared here now because the Excel
-  // report needs them; previously omitted even though every resolved
-  // doc has always carried them.
+
   resolvedAt?: Timestamp | null;
   resolvedByName?: string | null;
 };
@@ -38,9 +30,7 @@ const STATUS_BG: Record<Complaint['status'], string> = {
 };
 
 function monthOptions(): { value: string; label: string }[] {
-  // Last 24 months, newest first — plenty of runway without the list
-  // growing unbounded; complaints are meant to be exported and kept
-  // externally, not browsed here indefinitely.
+
   const opts: { value: string; label: string }[] = [];
   const now = new Date();
   for (let i = 0; i < 24; i++) {
@@ -52,16 +42,6 @@ function monthOptions(): { value: string; label: string }[] {
   return opts;
 }
 
-// Complaints only — never doubts. Doubts are meant to disappear (see
-// cleanupResolvedDoubts, the Cloud Function that deletes a resolved one
-// after 12h); a monthly record of who complained about what and how it
-// was resolved is the whole point of this button, so pulling in doubts
-// would defeat their own cleanup by keeping a permanent copy here.
-//
-// A dedicated query scoped to the chosen month, not the capped
-// 500-live-doc listener already on screen — that listener exists to
-// keep today's working queue fast, not to be a reliable source for a
-// month that might be well outside its most-recent-500 window.
 async function exportMonthToExcel(monthValue: string, monthLabel: string) {
   const [year, month] = monthValue.split('-').map(Number);
   const start = Timestamp.fromDate(new Date(year, month - 1, 1));
@@ -92,9 +72,6 @@ async function exportMonthToExcel(monthValue: string, monthLabel: string) {
     'Resolved/Rejected On': fmt(c.resolvedAt),
   }));
 
-  // Loaded on demand, same as every other xlsx use in this app — no
-  // reason to ship this ~500KB library to every faculty account that
-  // never opens this tab.
   const XLSX = await import('xlsx');
   const worksheet = XLSX.utils.json_to_sheet(sheetData.length ? sheetData : [{ 'No complaints filed this month': '' }]);
   worksheet['!cols'] = [
@@ -107,11 +84,6 @@ async function exportMonthToExcel(monthValue: string, monthLabel: string) {
   return rows.length;
 }
 
-// The remark draft lives here (local state), not in a shared map keyed
-// by id on the parent — same fix and same reasoning as the mobile app's
-// ComplaintsScreen.tsx: a shared map meant every keystroke into any one
-// card's remark box re-rendered every card in the list, not just the one
-// being typed into.
 function ComplaintCard({
   item,
   busy,
@@ -209,10 +181,7 @@ function Complaints() {
   const [exportStatus, setExportStatus] = useState('');
 
   useEffect(() => {
-    // Same 500-doc cap as the mobile app's complaintService.ts
-    // subscribeToAllComplaints — without it, this listener re-syncs
-    // every complaint ever filed, forever, to every faculty account
-    // that opens this tab.
+
     const q = query(collection(db, 'complaints'), orderBy('createdAt', 'desc'), limit(500));
     const unsubscribe = onSnapshot(
       q,

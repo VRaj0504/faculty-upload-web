@@ -4,14 +4,6 @@ import { examWholeCollegeTemplate, readSheetRows } from './xlsxTemplates';
 import type { ExamGroup } from './examSheetParser';
 import ExamSheetReview from './ExamSheetReview';
 
-// The no-AI equivalent of the whole-college PDF upload: one Excel/CSV
-// sheet, every branch/semester/exam-type mixed together, split by row
-// into however many separate date sheets it actually contains — same
-// review-and-publish screen the PDF path uses (ExamSheetReview), so a
-// correction here works exactly the same way it would after an AI
-// extraction. Repeaters and supplementary exams often run on a
-// completely different week than the exam they belong to; nothing
-// here assumes otherwise, since every row carries its own dates.
 function ExamWholeCollegeImport() {
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState('');

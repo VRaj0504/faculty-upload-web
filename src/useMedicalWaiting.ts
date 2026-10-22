@@ -2,11 +2,6 @@ import { useEffect, useState } from 'react';
 import { collection, collectionGroup, onSnapshot, query, where } from 'firebase/firestore';
 import { db } from './firebaseConfig';
 
-// How many medical-leave steps are waiting on this person right now —
-// the same three queries MedicalLeaves.tsx runs (so the same rules and
-// index apply), reduced to a count for the sidebar badge and Home tile.
-// Returns null until all three have answered, or if any of them fails
-// (the badge just stays hidden — the page itself shows the real error).
 export function useMedicalWaiting(email: string | null): number | null {
   const [parts, setParts] = useState<[number | null, number | null, number | null]>([null, null, null]);
   const [failed, setFailed] = useState(false);

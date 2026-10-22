@@ -17,9 +17,6 @@ type GradeDoc = {
   grade: string;
 };
 
-// Kept identical to the mobile app's own GRADE_POINTS (gradesService.ts)
-// so a student's official Transcript screen and this class overview
-// always agree on what a grade is worth.
 const GRADE_POINTS: Record<string, number> = {
   AA: 10,
   AB: 9,
@@ -46,7 +43,7 @@ function ClassCGPA() {
     getDocs(collection(db, 'roster')).then((snap) => {
       setRoster(
         snap.docs
-          .filter((d) => d.data().reviewer !== true) // app-store reviewer account
+          .filter((d) => d.data().reviewer !== true)
           .map((d) => ({ regNo: d.id, ...(d.data() as Omit<RosterEntry, 'regNo'>) })),
       );
       setDataLoading(false);
@@ -83,10 +80,7 @@ function ClassCGPA() {
     setResults(null);
     try {
       const sectionValue = section === '(no section)' ? null : section || null;
-      // One query for the whole class rather than one per student —
-      // grades already carry branch/section/admissionYear on every doc
-      // (see AssignGrades.tsx's write payload), so this scales to a
-      // class of any size in a single round trip.
+
       const constraints = [
         where('branch', '==', branch),
         where('admissionYear', '==', Number(admissionYear)),
@@ -106,10 +100,6 @@ function ClassCGPA() {
         (r) => String(r.admissionYear) === admissionYear && r.branch === branch && (!section || (r.section || '(no section)') === section),
       );
 
-      // Every roster student is listed, even ones with zero grades yet
-      // (shown as "no grades entered" rather than silently omitted) —
-      // a class list that quietly drops ungraded students would look
-      // like it's missing people, not like grading is incomplete.
       const computed: StudentCgpa[] = classRoster.map((student) => {
         const grades = byStudent.get(student.regNo) ?? [];
         const totalCredits = grades.reduce((sum, g) => sum + g.credits, 0);

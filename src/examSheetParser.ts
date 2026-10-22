@@ -1,22 +1,14 @@
-// Pure helpers for the Exam Schedule tab (ExamSchedule.tsx) — no React, no Firebase, so the
-// messy part (turning whatever a spreadsheet's cells look like into clean
-// ISO dates and 24h times) can be reasoned about and tested on its own.
+
 
 export type ExamEntry = {
-  date: string; // YYYY-MM-DD — a plain string, never a Date, so timezones can't shift an exam by a day
-  startTime: string; // HH:MM, 24h
-  endTime: string; // HH:MM, 24h — '' when the sheet only gave a start time
+  date: string;
+  startTime: string;
+  endTime: string;
   subjectCode: string;
   subjectName: string;
   venue: string;
 };
 
-// Must match EXAM_TYPE_LABELS in functions/src/examSheetExtraction.ts and
-// EXAM_TYPE_ORDER in the app's src/firebase/examScheduleService.ts.
-// "-repeaters" sheets are the separate date sheet some semesters publish for
-// students repeating a course (different subjects, sometimes different
-// times) — kept as their own sheet so regular students never see it mixed
-// into theirs.
 export const EXAM_TYPES = [
   { id: 'quiz', label: 'Quiz / Internal' },
   { id: 'midsem', label: 'Mid Semester' },
@@ -27,10 +19,6 @@ export const EXAM_TYPES = [
 ] as const;
 export type ExamTypeId = (typeof EXAM_TYPES)[number]['id'];
 
-// MNC has its own sheets; a student of MNC reads the MNC sheet and falls back
-// to the CSE one when none has been published for that exam.
-// One class's date sheet, as returned by the PDF/email import and as
-// stored in the `examSchedules` collection.
 export type ExamGroup = {
   branch: string;
   semester: number;
@@ -39,9 +27,6 @@ export type ExamGroup = {
   entries: ExamEntry[];
 };
 
-// Which branch sheets one publish writes to. A paper two or three branches
-// sit together is entered once and written to each real branch's own doc —
-// Firestore only ever stores CSE, ECE or MNC as a branch value.
 export const EXAM_BRANCH_CHOICES = [
   { value: 'CSE', label: 'CSE' },
   { value: 'ECE', label: 'ECE' },
@@ -54,8 +39,7 @@ export const EXAM_BRANCH_CHOICES = [
 export function branchesOf(choice: string): string[] {
   switch (choice) {
     case 'BOTH': return ['CSE', 'ECE'];
-    // MNC first: the server's notification for a CSE sheet skips MNC students
-    // when an MNC sheet for the same exam already exists, so they get one ping.
+
     case 'CSE_MNC': return ['MNC', 'CSE'];
     case 'ALL': return ['MNC', 'CSE', 'ECE'];
     default: return choice ? [choice] : [];
@@ -81,12 +65,6 @@ const MONTHS: Record<string, number> = {
   jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12,
 };
 
-// Accepts an Excel serial number, an ISO string, or the day-first formats
-// Indian date sheets actually use (12/11/2026, 12-11-26, 12 Nov 2026,
-// 12th November 2026, Thu, 12-Nov-2026). Day-first is deliberate: 03/04/2026
-// on an IIIT Surat sheet means 3 April, not March 4. Returns '' (never a
-// guess) when it can't tell — the preview table then shows that row as
-// needing a fix instead of silently saving a wrong date.
 export function parseExamDate(value: unknown): string {
   if (value === null || value === undefined || value === '') return '';
 
@@ -95,8 +73,7 @@ export function parseExamDate(value: unknown): string {
   }
 
   if (typeof value === 'number') {
-    // Excel serial date (days since 1899-12-30). Anything below ~1 or
-    // above ~100000 isn't a plausible date, so treat it as not-a-date.
+
     if (value < 1 || value > 100000) return '';
     const d = new Date(Date.UTC(1899, 11, 30) + Math.floor(value) * 86400000);
     return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
@@ -134,10 +111,6 @@ export function parseExamDate(value: unknown): string {
   return '';
 }
 
-// One clock time -> "HH:MM" 24h, or ''. Handles Excel time fractions
-// (0.4166 = 10:00), "10:00", "10.00", "10 AM", "1:30 pm". Second return
-// value says whether the text itself carried an am/pm marker, which the
-// range parser needs to disambiguate "2:00 - 5:00 PM".
 function parseOneTime(raw: unknown): { hhmm: string; hadMeridiem: boolean; pm: boolean } | null {
   if (raw === null || raw === undefined || raw === '') return null;
   if (typeof raw === 'number') {
@@ -161,10 +134,6 @@ export function parseSingleTime(raw: unknown): string {
   return parseOneTime(raw)?.hhmm ?? '';
 }
 
-// "10:00 AM - 1:00 PM", "10:00-13:00", "10 to 1 pm", "2:00 - 5:00 PM".
-// A range with no am/pm on the start but "pm" on the end ("2:00 - 5:00 PM")
-// means the start is PM too, unless that would put the start AFTER the end
-// ("10:00 - 1:00 PM" is 10 AM - 1 PM).
 export function parseTimeRange(raw: unknown): { start: string; end: string } {
   if (raw === null || raw === undefined || raw === '') return { start: '', end: '' };
   if (typeof raw === 'number') return { start: parseSingleTime(raw), end: '' };
@@ -185,8 +154,6 @@ export function parseTimeRange(raw: unknown): { start: string; end: string } {
   }
   return { start, end: b.hhmm };
 }
-
-// ---- Spreadsheet header matching ------------------------------------------
 
 const norm = (h: unknown) => String(h ?? '').toLowerCase().replace(/[\s._/()\-:]/g, '');
 
@@ -218,10 +185,8 @@ export function mapHeaders(headerRow: unknown[]): ColumnMap | null {
 
 export type ParsedSheet = {
   entries: ExamEntry[];
-  // Rows that had *something* in them but couldn't be turned into a clean
-  // entry — kept (with blanks) so the preview shows them for fixing rather
-  // than silently dropping a real exam.
-  problemRows: number[]; // 1-based indexes into `entries`
+
+  problemRows: number[];
 };
 
 export function parseExamRows(rows: unknown[][]): ParsedSheet | { error: string } {
@@ -252,17 +217,11 @@ export function parseExamRows(rows: unknown[][]): ParsedSheet | { error: string 
 
     const code = String(cell(map.code) ?? '').trim().toUpperCase();
     const name = String(cell(map.name) ?? '').trim();
-    if (!code && !name) continue; // a spacer/notes row with no subject isn't an exam
+    if (!code && !name) continue;
 
-    // A subject with NO date and NO time at all isn't scheduled — e.g. a
-    // row of the portal's template (which lists every subject of the
-    // semester) that has no exam this time. Skip it instead of carrying
-    // the previous row's date down onto it.
     const blank = (i: number) => i === -1 || cell(i) === undefined || cell(i) === null || String(cell(i)).trim() === '';
     if (blank(map.date) && blank(map.start) && blank(map.end) && blank(map.time)) continue;
 
-    // Merged date cells (one date spanning two subjects in the same day)
-    // come through as blank on the second row — carry the last date down.
     let date = parseExamDate(cell(map.date));
     if (!date && (cell(map.date) === '' || cell(map.date) === undefined) && lastDate) date = lastDate;
     if (date) lastDate = date;
@@ -286,16 +245,12 @@ export function parseExamRows(rows: unknown[][]): ParsedSheet | { error: string 
   return { entries, problemRows };
 }
 
-// ---- Whole-college sheet (Branch + Semester + Exam Type per row) --------
-
 const EXAM_TYPE_BY_NORM = new Map<string, ExamTypeId>();
 for (const t of EXAM_TYPES) {
   EXAM_TYPE_BY_NORM.set(norm(t.id), t.id);
   EXAM_TYPE_BY_NORM.set(norm(t.label), t.id);
 }
-// A few extra spellings people actually type, beyond the exact id/label —
-// kept separate from the loop above so the canonical id/label always wins
-// if there's ever a clash.
+
 EXAM_TYPE_BY_NORM.set(norm('midsem'), 'midsem');
 EXAM_TYPE_BY_NORM.set(norm('mid sem'), 'midsem');
 EXAM_TYPE_BY_NORM.set(norm('midsem repeater'), 'midsem-repeaters');
@@ -321,16 +276,6 @@ function examTypeLabelFor(id: ExamTypeId): string {
   return EXAM_TYPES.find((t) => t.id === id)?.label ?? id;
 }
 
-// One sheet, every branch/semester/exam-type mixed together — the
-// no-AI equivalent of uploading the whole college's PDF at once.
-// Repeaters and supplementary exams routinely run on a totally
-// different week than the main exam they belong to; nothing here
-// assumes otherwise — each row's OWN Exam Type and dates are all that
-// matter, there's no shared-week constraint to violate.
-//
-// Reuses the exact same per-row date/time/code/name/venue detection as
-// parseExamRows above (same findCol/norm helpers), just with three
-// more required columns to say which class a row belongs to.
 export function parseWholeCollegeExamRows(
   rows: unknown[][],
 ): { groups: ExamGroup[]; warnings: string[] } | { error: string } {
@@ -348,7 +293,7 @@ export function parseWholeCollegeExamRows(
     const b = findCol(headers, ['branch', 'dept', 'department'], ['branch', 'dept']);
     const s = findCol(headers, ['semester', 'sem'], ['semester', 'sem']);
     const e = findCol(headers, ['examtype', 'exam', 'type'], ['examtype', 'exam']);
-    if (b === -1 || s === -1 || e === -1) continue; // found a date-sheet-shaped header, but not this whole-college one
+    if (b === -1 || s === -1 || e === -1) continue;
     headerIdx = i;
     map = candidate;
     branchCol = b;
@@ -381,9 +326,6 @@ export function parseWholeCollegeExamRows(
     const name = String(cell(map.name) ?? '').trim();
     if (!code && !name) continue;
 
-    // Merged cells (one class/date spanning several subject rows) come
-    // through blank on the later rows — carry the last real value down,
-    // same idea as parseExamRows' date-carrying above.
     let branchRaw = String(cell(branchCol) ?? '').trim();
     if (!branchRaw && lastBranch) branchRaw = lastBranch;
     if (branchRaw) lastBranch = branchRaw;
