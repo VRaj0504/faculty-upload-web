@@ -7,20 +7,14 @@ import { batchChoices, currentAcademicYear, examYearOptions } from './academicYe
 import { labStatusFor, type LabStatus } from './labDetection';
 
 const BRANCHES = ['CSE', 'ECE', 'MNC'] as const;
-// Canonical section form is the bare letter, matching what's stored on a
-// student's profile and in the roster — anything else silently matches
-// nothing, since Firestore compares these as exact strings.
+
 const SECTIONS = ['A', 'B', 'C', 'D'] as const;
 const SEMESTERS = [1, 2, 3, 4, 5, 6, 7, 8] as const;
-// Same order as the folders students see.
+
 const TYPES = ['Notes', 'Slides', 'Assignment', 'PYQ'] as const;
 const BATCH_CHOICES = batchChoices();
 const EXAM_YEARS = examYearOptions();
-// Keeps a sane cap on file size regardless of what the backend allows —
-// checking this client-side means a faculty member filing an oversized
-// deck gets a clear message immediately, instead of waiting through
-// however long the upload takes only to hit a cryptic storage-layer
-// error at the end.
+
 const MAX_FILE_MB = 50;
 
 type BranchCode = typeof BRANCHES[number];

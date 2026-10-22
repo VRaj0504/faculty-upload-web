@@ -65,10 +65,10 @@ export default function Sidebar({
   return (
     <aside className="sidebar" aria-label="Portal navigation">
       <div className="sidebar-brand">
-        <span className="brand-mark" aria-hidden="true">IS</span>
+        <img className="brand-logo" src="/logo.svg" alt="" aria-hidden="true" />
         <div className="brand-text">
-          <span className="brand-name">IIIT Surat</span>
-          <span className="brand-sub">Resources Desk</span>
+          <img className="brand-word" src="/wordmark.png" alt="CollegeGo" />
+          <span className="brand-sub">× IIIT Surat</span>
         </div>
       </div>
 

@@ -7,6 +7,7 @@ export type Tab =
   | 'home'
   | 'resources'
   | 'announcements'
+  | 'notices'
   | 'myTimetable'
   | 'roster'
   | 'attendance'
@@ -53,12 +54,14 @@ export const NAV: NavGroup[] = [
     icon: 'upload',
     items: [
       { tab: 'resources', label: 'Resources', hint: 'Notes, papers & slides', icon: 'upload' },
+      { tab: 'notices', label: 'Notices', hint: 'Post to the app notice board', icon: 'inbox' },
       { tab: 'announcements', label: 'Announcements', hint: 'Notify a class', icon: 'megaphone' },
       { tab: 'myTimetable', label: 'My timetable', hint: 'Your week', icon: 'clock' },
     ],
     prefetch: () => {
       import('./Upload');
       import('./Announcements');
+      import('./Notices');
       import('./MyTimetable');
     },
   },

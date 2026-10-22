@@ -40,6 +40,7 @@ const AttendanceExport = lazyRetry(() => import('./AttendanceExport'));
 const AttendanceRegister = lazyRetry(() => import('./AttendanceRegister'));
 const InboxImports = lazyRetry(() => import('./InboxImports'));
 const Announcements = lazyRetry(() => import('./Announcements'));
+const Notices = lazyRetry(() => import('./Notices'));
 const Complaints = lazyRetry(() => import('./Complaints'));
 const Reports = lazyRetry(() => import('./Reports'));
 const MedicalLeaves = lazyRetry(() => import('./MedicalLeaves'));
@@ -89,7 +90,7 @@ function App() {
   const sosAlerts = useActiveSos(role === 'faculty' || role === 'admin');
   const sosOpen = sosAlerts?.filter((a) => a.status === 'open').length ?? 0;
   useEffect(() => {
-    const base = 'IIIT Surat · Faculty Desk';
+    const base = 'CollegeGo × IIIT Surat';
     document.title = sosOpen > 0 ? `(${sosOpen}) SOS · ${base}` : base;
   }, [sosOpen]);
 
@@ -117,6 +118,23 @@ function App() {
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       setUser(firebaseUser);
+      // Returning faculty: open the portal straight away with the role saved
+      // in this browser, then confirm it with the server in the background.
+      // (The database rules still check every read and write.)
+      const cacheKey = firebaseUser ? `cg-portal-profile:${firebaseUser.uid}` : '';
+      let cached: { role: string | null; profile: Profile } | null = null;
+      if (firebaseUser) {
+        try {
+          cached = JSON.parse(localStorage.getItem(cacheKey) || 'null');
+        } catch {
+          cached = null;
+        }
+        if (cached) {
+          setRole(cached.role);
+          setProfile(cached.profile);
+          setCheckingAuth(false);
+        }
+      }
 
       try {
         if (firebaseUser) {
@@ -127,19 +145,34 @@ function App() {
           // isAdmin (set only by scripts/make-admin.js) gives full admin
           // access on top of the account's normal role — e.g. a student
           // who runs the app keeps their student profile in the app.
-          setRole(data?.isAdmin === true ? 'admin' : data?.role ?? null);
+          const nextRole = data?.isAdmin === true ? 'admin' : data?.role ?? null;
+          setRole(nextRole);
           // The medical-leave rules match on the email stored on the
           // profile, so that's the one used for the badge too.
           const email = (data?.email ?? firebaseUser.email ?? '').toLowerCase();
-          setProfile({ name: data?.name?.trim() || firebaseUser.displayName || email, email });
+          const nextProfile = { name: data?.name?.trim() || firebaseUser.displayName || email, email };
+          setProfile(nextProfile);
+          try {
+            localStorage.setItem(cacheKey, JSON.stringify({ role: nextRole, profile: nextProfile }));
+          } catch {
+            /* storage blocked — fine, just no fast start next time */
+          }
         } else {
           setRole(null);
           setProfile(null);
+          try {
+            Object.keys(localStorage)
+              .filter((k) => k.startsWith('cg-portal-profile:'))
+              .forEach((k) => localStorage.removeItem(k));
+          } catch {
+            /* nothing to clear */
+          }
         }
       } catch {
-        // Offline / transient failure: treat as "no role" (shows Access
-        // denied with a log-out option) instead of hanging on Loading…
-        setRole(null);
+        // Offline / transient failure: keep the saved role if there is one;
+        // otherwise treat as "no role" (shows Access denied with a log-out
+        // option) instead of hanging on Loading…
+        if (!cached) setRole(null);
       } finally {
         setCheckingAuth(false);
       }
@@ -151,7 +184,7 @@ function App() {
   if (checkingAuth) {
     return (
       <div className="status-shell">
-        <BrandLoader large label="Opening Faculty Desk…" />
+        <BrandLoader large label="Opening CollegeGo…" />
       </div>
     );
   }
@@ -256,6 +289,12 @@ function App() {
             {activeTab === 'resources' && (
               <div className="panel-enter" key="resources">
                 <Upload />
+              </div>
+            )}
+
+            {activeTab === 'notices' && (
+              <div className="panel-enter" key="notices">
+                <Notices />
               </div>
             )}
 

@@ -3,6 +3,6 @@
 // WhatsApp option).
 export const SUPPORT = {
   name: 'Portal support',
-  email: 'ug25cse114@iiitsurat.ac.in',
+  email: 'collegego05@gmail.com',
   phone: '919509031907', // country code + number, no + or spaces (empty hides WhatsApp / Call)
 };

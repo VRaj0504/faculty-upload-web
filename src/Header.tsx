@@ -5,10 +5,10 @@ function Header({ user }: { user: User | null }) {
   return (
     <header className="app-header">
       <div className="app-header-brand">
-        <span className="app-header-monogram" aria-hidden="true">IS</span>
+        <img className="brand-logo" src="/logo.svg" alt="" aria-hidden="true" />
         <div className="app-header-brand-text">
-          <span className="app-header-mark">IIIT Surat</span>
-          <span className="app-header-tagline">Resources Desk</span>
+          <img className="brand-word" src="/wordmark.png" alt="CollegeGo" />
+          <span className="app-header-tagline">× IIIT Surat</span>
         </div>
       </div>
       {user && (

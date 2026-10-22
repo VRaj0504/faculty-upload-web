@@ -12,7 +12,7 @@ const PREVIEW: { title: string; sub: string; icon: IconName; bg: string; fg: str
   { title: 'Attendance', sub: 'Mark or upload', icon: 'check', bg: 'var(--tone-mint-bg)', fg: 'var(--tone-mint-fg)' },
 ];
 
-// Drifting "IS" marks behind the sign-in screen — on the dark panel, and on
+// Drifting graduation-cap marks behind the sign-in screen — on the dark panel, and on
 // the form side so phones (where the dark panel is hidden) get them too.
 const MARKS = [
   { x: '6%', y: '10%', s: 64, d: 16, delay: 0 },
@@ -36,7 +36,12 @@ function LoginBg({ tone }: { tone: 'dark' | 'light' }) {
           className="login-mark"
           style={{ left: m.x, top: m.y, width: m.s, height: m.s, fontSize: m.s * 0.38, animationDuration: `${m.d}s`, animationDelay: `${m.delay}s` }}
         >
-          IS
+          {/* the CollegeGo "G" */}
+          <svg viewBox="150 180 724 664" width="56%" height="56%" fill="none" stroke="currentColor" strokeWidth="96" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M 671.8 344.7 A 250 250 0 1 0 653.3 697.8" />
+            <path d="M 606 512 H 784 V 668" />
+            <circle cx="784" cy="690" r="52" fill="currentColor" stroke="none" />
+          </svg>
         </span>
       ))}
     </div>
@@ -95,10 +100,10 @@ function Login() {
       <section className="login-hero" aria-hidden="true">
         <LoginBg tone="dark" />
         <div className="login-hero-brand">
-          <span className="brand-mark">IS</span>
+          <img className="brand-logo" src="/logo.svg" alt="" />
           <div className="brand-text">
-            <span className="brand-name">IIIT Surat</span>
-            <span className="brand-sub">Resources Desk</span>
+            <img className="brand-word" src="/wordmark-light.png" alt="CollegeGo" />
+            <span className="brand-sub">× IIIT Surat</span>
           </div>
         </div>
 
@@ -134,10 +139,10 @@ function Login() {
         <LoginBg tone="light" />
         <div className="login-card">
           <div className="login-mobile-brand">
-            <span className="brand-mark" aria-hidden="true">IS</span>
+            <img className="brand-logo" src="/logo.svg" alt="" aria-hidden="true" />
             <div className="brand-text">
-              <span className="brand-name">IIIT Surat</span>
-              <span className="brand-sub">Resources Desk</span>
+              <img className="brand-word" src="/wordmark.png" alt="CollegeGo" />
+              <span className="brand-sub">× IIIT Surat</span>
             </div>
           </div>
 
@@ -196,7 +201,7 @@ function Login() {
             </button>
           </form>
 
-          <p className="login-foot">For faculty and admin accounts. Students use the IIIT Surat app.</p>
+          <p className="login-foot">For faculty and admin accounts. Students use the CollegeGo app.</p>
           <p className="login-foot" style={{ marginTop: '0.4rem' }}>
             Trouble signing in?{' '}
             <a href={`mailto:${SUPPORT.email}?subject=${encodeURIComponent('Faculty portal: trouble signing in')}`}>Contact support</a>
