@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { collection, getDocs, query, where } from 'firebase/firestore';
 import { db } from './firebaseConfig';
+import { computeCgpa } from './examRules';
 
 type RosterEntry = {
   regNo: string;
@@ -17,16 +18,6 @@ type GradeDoc = {
   grade: string;
 };
 
-const GRADE_POINTS: Record<string, number> = {
-  AA: 10,
-  AB: 9,
-  BB: 8,
-  BC: 7,
-  CC: 6,
-  CD: 5,
-  DD: 4,
-  FF: 0,
-};
 
 type StudentCgpa = {
   regNo: string;
@@ -102,12 +93,10 @@ function ClassCGPA() {
 
       const computed: StudentCgpa[] = classRoster.map((student) => {
         const grades = byStudent.get(student.regNo) ?? [];
-        const totalCredits = grades.reduce((sum, g) => sum + g.credits, 0);
-        const totalPoints = grades.reduce((sum, g) => sum + g.credits * (GRADE_POINTS[g.grade] ?? 0), 0);
         return {
           regNo: student.regNo,
           name: student.name,
-          cgpa: totalCredits > 0 ? Math.round((totalPoints / totalCredits) * 100) / 100 : null,
+          cgpa: computeCgpa(grades.map((g) => ({ ...g, subjectCode: '', subjectName: '', subjectSemester: 0 }))),
           subjectsGraded: grades.length,
         };
       });
@@ -134,11 +123,10 @@ function ClassCGPA() {
     <div className="card" style={{ width: 640, padding: '2.5rem', margin: '3rem auto' }}>
       <h1 style={{ fontSize: '1.5rem' }}>Class CGPA</h1>
       <p style={{ fontSize: '0.85rem', color: 'var(--ink-soft)' }}>
-        CGPA here is calculated live from every grade currently entered for each student — it's
-        not a separate stored number, so it always matches exactly what shows on a student's own
-        Transcript screen in the app. A student who's only had one subject graded so far will
-        show that subject's grade as their CGPA until more subjects are entered — that's expected,
-        not a bug.
+        CGPA is calculated live from the grades entered for each student, using the Academic
+        Ordinance formula (rule 7.14): only passed courses (DD or better) count, so an FF lowers
+        earned credits but not CGPA. It matches the student's Transcript and Exam Status screens in
+        the app. A student with only one subject graded shows that subject's grade as their CGPA.
       </p>
 
       <div style={{ display: 'flex', gap: '1rem', marginTop: '1.5rem' }}>

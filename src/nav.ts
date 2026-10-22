@@ -12,6 +12,7 @@ export type Tab =
   | 'attendance'
   | 'grades'
   | 'cgpa'
+  | 'examCell'
   | 'medicalLeaves'
   | 'sos'
   | 'complaints'
@@ -73,6 +74,7 @@ export const NAV: NavGroup[] = [
       { tab: 'attendance', label: 'Attendance', hint: 'Mark, register, upload, download', icon: 'check' },
       { tab: 'grades', label: 'Assign grades', hint: 'Publish results', icon: 'award' },
       { tab: 'cgpa', label: 'Class CGPA', hint: 'Class overview', icon: 'chart' },
+      { tab: 'examCell', label: 'Exam cell', hint: 'Backlogs, results, registrations', icon: 'alert' },
     ],
     prefetch: () => {
       import('./RosterUpload');
@@ -83,6 +85,7 @@ export const NAV: NavGroup[] = [
       import('./AttendanceRegister');
       import('./AssignGrades');
       import('./ClassCGPA');
+      import('./ExamCell');
     },
   },
   {

@@ -30,6 +30,7 @@ const MessSubscribersUpload = lazyRetry(() => import('./MessSubscribersUpload'))
 const AttendanceUpload = lazyRetry(() => import('./AttendanceUpload'));
 const AssignGrades = lazyRetry(() => import('./AssignGrades'));
 const ClassCGPA = lazyRetry(() => import('./ClassCGPA'));
+const ExamCell = lazyRetry(() => import('./ExamCell'));
 const MarkAttendance = lazyRetry(() => import('./MarkAttendance'));
 const AttendanceExport = lazyRetry(() => import('./AttendanceExport'));
 const AttendanceRegister = lazyRetry(() => import('./AttendanceRegister'));
@@ -421,6 +422,12 @@ function App() {
             {activeTab === 'cgpa' && (
               <div className="panel-enter" key="cgpa">
                 <ClassCGPA />
+              </div>
+            )}
+
+            {activeTab === 'examCell' && (
+              <div className="panel-enter" key="examCell">
+                <ExamCell email={me.email} role={role} />
               </div>
             )}
           </Suspense>

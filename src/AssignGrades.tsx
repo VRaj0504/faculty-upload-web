@@ -1,6 +1,6 @@
 import BrandLoader from './BrandLoader';
 import { useState, useEffect, useMemo } from 'react';
-import { collection, getDocs, doc, writeBatch, serverTimestamp } from 'firebase/firestore';
+import { collection, getDocs, doc, writeBatch, serverTimestamp, query, where, Timestamp } from 'firebase/firestore';
 import { db, auth } from './firebaseConfig';
 import { gradesTemplate } from './xlsxTemplates';
 import { curriculum as staticCurriculum } from './curriculum';
@@ -394,6 +394,10 @@ function AssignGrades() {
       const enteredBy = auth.currentUser?.uid ?? 'web-portal';
       const enteredByName = auth.currentUser?.email ?? 'Web Portal';
       const sectionValue = section === '(no section)' ? null : section;
+      const existingSnap = await getDocs(
+        query(collection(db, 'grades'), where('subjectCode', '==', subjectCode.trim()), where('admissionYear', '==', Number(admissionYear))),
+      );
+      const existingById = new Map(existingSnap.docs.map((d) => [d.id, d.data() as Record<string, any>]));
 
       const CHUNK = 400;
       for (let i = 0; i < marks.length; i += CHUNK) {
@@ -403,6 +407,12 @@ function AssignGrades() {
           const grade = finalGrade(m.regNo, m.total);
 
           const id = `${m.regNo}_${subjectCode.trim()}`;
+          const prev = existingById.get(id);
+          const history = [...((prev?.history as unknown[]) ?? [])];
+          const prevAttempt = prev?.attempt ?? 'regular';
+          if (prev?.grade && prev.grade !== grade && prevAttempt !== 'regular') {
+            history.push({ grade: prev.grade, attempt: prevAttempt, enteredByName: prev.enteredByName ?? null, changedAt: Timestamp.now() });
+          }
           batch.set(doc(db, 'grades', id), {
             studentEnrollmentNumber: m.regNo,
             studentName: rosterEntry?.name ?? m.name,
@@ -415,9 +425,11 @@ function AssignGrades() {
             subjectSemester: Number(semester),
             credits: selectedSubject.credits ?? 0,
             grade,
+            attempt: 'regular',
+            history,
             enteredBy,
             enteredByName,
-            createdAt: serverTimestamp(),
+            createdAt: prev?.createdAt ?? serverTimestamp(),
             updatedAt: serverTimestamp(),
           });
         }
