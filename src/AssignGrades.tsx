@@ -330,7 +330,7 @@ function AssignGrades() {
       else setCutoffs({ AA: '', AB: '', BB: '', BC: '', CC: '', CD: '', DD: '' });
       setOverrides(saved?.overrides ?? {});
     } catch {
-      /* nothing remembered */
+
     }
     setGradeDraftLoaded(gradeDraftKey);
   }, [gradeDraftKey]);
@@ -339,7 +339,7 @@ function AssignGrades() {
     try {
       localStorage.setItem(gradeDraftKey, JSON.stringify({ cutoffs, overrides }));
     } catch {
-      /* ignore */
+
     }
   }, [cutoffs, overrides, gradeDraftKey, gradeDraftLoaded]);
 

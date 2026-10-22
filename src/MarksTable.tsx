@@ -79,7 +79,7 @@ export default function MarksTable({
     try {
       localStorage.setItem(`marksDraft:${draftKey}`, JSON.stringify({ comps, cells }));
     } catch {
-      /* private mode — the table still works, it just isn't remembered */
+
     }
   }, [comps, cells, draftKey, loadedKey]);
 

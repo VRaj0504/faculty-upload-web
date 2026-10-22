@@ -27,7 +27,7 @@ const SESSIONS = 'attendanceSessions';
 export async function loadRoster(): Promise<RosterEntry[]> {
   const snap = await getDocs(collection(db, 'roster'));
   return snap.docs
-    // The app-store reviewer account (scripts/create-reviewer.js) never appears in class lists.
+
     .filter((d) => d.data().reviewer !== true)
     .map((d) => {
       const x = d.data() as Partial<RosterEntry>;
@@ -67,7 +67,7 @@ export async function loadSubjects(branches: string[], semester: number): Promis
         if (x.code && !out.has(normCode(x.code))) out.set(normCode(x.code), { code: x.code, name: x.name ?? x.code });
       });
     } catch {
-      /* fall back to the built-in list */
+
     }
     for (const s of subjectsFor(branch, semester)) {
       if (!out.has(normCode(s.code))) out.set(normCode(s.code), { code: s.code, name: s.name });

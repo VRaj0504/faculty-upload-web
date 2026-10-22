@@ -39,7 +39,7 @@ export default function ExamEditor({
     try {
       localStorage.setItem(KEY, v);
     } catch {
-      /* private mode — just don't remember */
+
     }
   };
 

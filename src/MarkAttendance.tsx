@@ -44,7 +44,7 @@ function MarkAttendance() {
     try {
       pref = JSON.parse(localStorage.getItem(`att-lab:${classKey}`) ?? '{}');
     } catch {
-      /* ignore */
+
     }
     const looksLab = /\b(lab|laboratory|workshop|practical)\b/i.test(ctx.subject.name);
     setKind(pref.kind ?? (looksLab ? 'lab' : 'lecture'));
@@ -58,7 +58,7 @@ function MarkAttendance() {
       const cur = JSON.parse(localStorage.getItem(`att-lab:${classKey}`) ?? '{}');
       localStorage.setItem(`att-lab:${classKey}`, JSON.stringify({ ...cur, ...next }));
     } catch {
-      /* ignore */
+
     }
   };
 

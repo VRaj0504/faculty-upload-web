@@ -21,7 +21,7 @@ function clearFlag(): void {
   try {
     sessionStorage.removeItem(RELOAD_FLAG);
   } catch {
-    /* nothing to clear */
+
   }
 }
 

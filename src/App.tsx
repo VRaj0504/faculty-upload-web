@@ -136,7 +136,7 @@ function App() {
           try {
             localStorage.setItem(cacheKey, JSON.stringify({ role: nextRole, profile: nextProfile }));
           } catch {
-            /* storage blocked — fine, just no fast start next time */
+
           }
         } else {
           setRole(null);
@@ -146,7 +146,7 @@ function App() {
               .filter((k) => k.startsWith('cg-portal-profile:'))
               .forEach((k) => localStorage.removeItem(k));
           } catch {
-            /* nothing to clear */
+
           }
         }
       } catch {

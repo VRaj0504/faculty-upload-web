@@ -116,7 +116,7 @@ function MyTimetable({ role, name }: { role: string | null; name: string }) {
           if (explicit) found = explicit;
         }
       } catch {
-        /* fall back to the name match */
+
       }
       if (!found) found = initialsForName(name);
       if (!cancelled) {

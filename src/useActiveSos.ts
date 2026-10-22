@@ -39,7 +39,7 @@ function beep() {
       o.stop(t + 0.21);
     });
   } catch {
-    /* no sound — fine */
+
   }
 }
 
