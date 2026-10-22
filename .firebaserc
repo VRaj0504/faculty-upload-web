@@ -1,5 +1,18 @@
 {
   "projects": {
     "default": "iiit-surat-app-6643d"
-  }
+  },
+  "targets": {
+    "iiit-surat-app-6643d": {
+      "hosting": {
+        "main": [
+          "collegego-iiitsurat"
+        ],
+        "old": [
+          "faculty-upload-web"
+        ]
+      }
+    }
+  },
+  "etags": {}
 }
