@@ -12,7 +12,9 @@ export type Tab =
   | 'attendance'
   | 'grades'
   | 'cgpa'
-  | 'examCell'
+  | 'examStatus'
+  | 'examResults'
+  | 'examNotices'
   | 'medicalLeaves'
   | 'sos'
   | 'complaints'
@@ -66,15 +68,12 @@ export const NAV: NavGroup[] = [
   {
     id: 'students',
     label: 'Students',
-    hint: 'Roster, attendance and grades',
+    hint: 'Roster, profiles and attendance',
     tone: 'mint',
     icon: 'users',
     items: [
-      { tab: 'roster', label: 'Students', hint: 'Roster upload & edit', icon: 'users' },
+      { tab: 'roster', label: 'Students', hint: 'Roster, profiles, CGPA & backlogs', icon: 'users' },
       { tab: 'attendance', label: 'Attendance', hint: 'Mark, register, upload, download', icon: 'check' },
-      { tab: 'grades', label: 'Assign grades', hint: 'Publish results', icon: 'award' },
-      { tab: 'cgpa', label: 'Class CGPA', hint: 'Class overview', icon: 'chart' },
-      { tab: 'examCell', label: 'Exam cell', hint: 'Backlogs, results, registrations', icon: 'alert' },
     ],
     prefetch: () => {
       import('./RosterUpload');
@@ -83,6 +82,24 @@ export const NAV: NavGroup[] = [
       import('./AttendanceUpload');
       import('./AttendanceExport');
       import('./AttendanceRegister');
+    },
+  },
+  {
+    id: 'exams',
+    label: 'Exam cell',
+    hint: 'Date sheets, grades, results and backlogs',
+    tone: 'pink',
+    icon: 'award',
+    items: [
+      { tab: 'exams', label: 'Exam schedule', hint: 'Mid & end sem date sheets', icon: 'calendar' },
+      { tab: 'grades', label: 'Assign grades', hint: 'Publish results', icon: 'award' },
+      { tab: 'examResults', label: 'Upload results', hint: 'Official result sheet', icon: 'upload' },
+      { tab: 'examStatus', label: 'Backlogs & status', hint: 'Year back, credits, CGPA', icon: 'alert' },
+      { tab: 'cgpa', label: 'Class CGPA', hint: 'Class overview', icon: 'chart' },
+      { tab: 'examNotices', label: 'Exam notices', hint: 'Supplementary & make-up registration', icon: 'megaphone' },
+    ],
+    prefetch: () => {
+      import('./ExamSchedule');
       import('./AssignGrades');
       import('./ClassCGPA');
       import('./ExamCell');
@@ -110,18 +127,16 @@ export const NAV: NavGroup[] = [
   {
     id: 'schedules',
     label: 'Schedules',
-    hint: 'Timetables, exams and holidays',
+    hint: 'Timetables, holidays and rooms',
     tone: 'yellow',
     icon: 'calendar',
     items: [
       { tab: 'timetable', label: 'Class timetables', hint: 'Import & edit', icon: 'grid' },
-      { tab: 'exams', label: 'Exam schedule', hint: 'Mid & end sem', icon: 'calendar' },
       { tab: 'holidays', label: 'Holidays', hint: 'Add a day off', icon: 'sun' },
       { tab: 'roomCleanup', label: 'Room names', hint: 'Fix duplicates', icon: 'door' },
     ],
     prefetch: () => {
       import('./TimetableEditor');
-      import('./ExamSchedule');
       import('./AddHoliday');
       import('./RoomCleanup');
     },

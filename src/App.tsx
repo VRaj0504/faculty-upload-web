@@ -70,7 +70,7 @@ function App() {
   const [checkingAuth, setCheckingAuth] = useState(true);
   const [activeTab, setActiveTabState] = useState<Tab>(tabFromHash);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [rosterMode, setRosterMode] = useState<'upload' | 'browse'>('upload');
+  const [rosterMode, setRosterMode] = useState<'upload' | 'browse'>('browse');
   const [curriculumMode, setCurriculumMode] = useState<'upload' | 'browse'>('upload');
   const [attendanceMode, setAttendanceMode] = useState<'mark' | 'register' | 'excel' | 'export'>('mark');
 
@@ -316,15 +316,15 @@ function App() {
                   <SegmentedControl<'upload' | 'browse'>
                     size="sm"
                     options={[
+                      { value: 'browse', label: 'Browse & profiles' },
                       { value: 'upload', label: 'Bulk upload' },
-                      { value: 'browse', label: 'Browse & edit' },
                     ]}
                     value={rosterMode}
                     onChange={setRosterMode}
                   />
                 </div>
                 <div className="panel-enter" key={rosterMode}>
-                  {rosterMode === 'upload' ? <RosterUpload /> : <RosterBrowser />}
+                  {rosterMode === 'upload' ? <RosterUpload /> : <RosterBrowser email={me.email} role={role} />}
                 </div>
               </div>
             )}
@@ -425,9 +425,21 @@ function App() {
               </div>
             )}
 
-            {activeTab === 'examCell' && (
-              <div className="panel-enter" key="examCell">
-                <ExamCell email={me.email} role={role} />
+            {activeTab === 'examStatus' && (
+              <div className="panel-enter" key="examStatus">
+                <ExamCell email={me.email} role={role} view="status" />
+              </div>
+            )}
+
+            {activeTab === 'examResults' && (
+              <div className="panel-enter" key="examResults">
+                <ExamCell email={me.email} role={role} view="results" />
+              </div>
+            )}
+
+            {activeTab === 'examNotices' && (
+              <div className="panel-enter" key="examNotices">
+                <ExamCell email={me.email} role={role} view="notices" />
               </div>
             )}
           </Suspense>
