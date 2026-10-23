@@ -2,6 +2,8 @@ import { useState, useEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { collection, getDocs, doc, setDoc, deleteDoc, query, where, limit } from 'firebase/firestore';
 import { db } from './firebaseConfig';
+import { useExamAccess } from './ExamCell';
+import StudentAcademics from './StudentAcademics';
 
 type RosterRow = {
   regNo: string;
@@ -33,7 +35,8 @@ function getCurrentSemester(admissionYear: number, today: Date = new Date(), pro
   return Math.min(Math.max(semester, 1), totalSemesters);
 }
 
-function RosterBrowser() {
+function RosterBrowser({ email, role }: { email: string; role: string | null }) {
+  const access = useExamAccess(email, role);
   const [rows, setRows] = useState<RosterRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
@@ -508,6 +511,16 @@ function RosterBrowser() {
                 </div>
               </div>
               {previewError && <p className="error-text">{previewError}</p>}
+              <div style={{ borderTop: '1px solid var(--line)', paddingTop: '1rem' }}>
+                <div className="eyebrow" style={{ fontSize: '0.65rem', marginBottom: '0.5rem' }}>Academic record</div>
+                {access.loading ? (
+                  <p className="res-hint">Loading…</p>
+                ) : access.full || access.hodBranches.includes(previewRow.branch) ? (
+                  <StudentAcademics regNo={previewRow.regNo} admissionYear={previewRow.admissionYear} />
+                ) : (
+                  <p className="res-hint">CGPA, grades and backlogs are visible to the exam cell, admins and this student's HOD.</p>
+                )}
+              </div>
             </div>
           </div>
         </div>,
