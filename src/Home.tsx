@@ -51,7 +51,7 @@ export default function Home({
       title: 'Medical leaves',
       sub:
         medicalWaiting === null
-          ? 'Doctor → HOD → teachers'
+          ? 'Doctor → DR → Dean → HOD'
           : medicalWaiting === 0
             ? 'Nothing waiting on you'
             : `${medicalWaiting} waiting on you`,

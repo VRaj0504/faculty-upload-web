@@ -2,35 +2,34 @@ import { useEffect, useState } from 'react';
 import { collection, collectionGroup, onSnapshot, query, where } from 'firebase/firestore';
 import { db } from './firebaseConfig';
 
+const ROLES = ['doctor', 'dr', 'dean', 'hod'] as const;
+
 export function useMedicalWaiting(email: string | null): number | null {
-  const [parts, setParts] = useState<[number | null, number | null, number | null]>([null, null, null]);
+  const [parts, setParts] = useState<(number | null)[]>([null, null, null, null, null]);
   const [failed, setFailed] = useState(false);
 
   useEffect(() => {
     if (!email) return;
-    setParts([null, null, null]);
+    setParts([null, null, null, null, null]);
     setFailed(false);
-    const set = (i: 0 | 1 | 2) => (n: number) =>
+    const set = (i: number) => (n: number) =>
       setParts((p) => {
-        const next = [...p] as typeof p;
+        const next = [...p];
         next[i] = n;
         return next;
       });
     const fail = () => setFailed(true);
     const unsubs = [
-      onSnapshot(
-        query(collection(db, 'leaveApplications'), where('doctorEmail', '==', email)),
-        (s) => set(0)(s.docs.filter((d) => d.data().stage === 'doctor').length),
-        fail,
-      ),
-      onSnapshot(
-        query(collection(db, 'leaveApplications'), where('hodEmail', '==', email)),
-        (s) => set(1)(s.docs.filter((d) => d.data().stage === 'hod').length),
-        fail,
+      ...ROLES.map((role, i) =>
+        onSnapshot(
+          query(collection(db, 'leaveApplications'), where(`${role}Email`, '==', email)),
+          (s) => set(i)(s.docs.filter((d) => d.data().stage === role).length),
+          fail,
+        ),
       ),
       onSnapshot(
         query(collectionGroup(db, 'teacherAcks'), where('email', '==', email)),
-        (s) => set(2)(s.docs.filter((d) => d.data().status === 'pending').length),
+        (s) => set(ROLES.length)(s.docs.filter((d) => d.data().status === 'pending').length),
         fail,
       ),
     ];
@@ -38,5 +37,5 @@ export function useMedicalWaiting(email: string | null): number | null {
   }, [email]);
 
   if (!email || failed || parts.some((p) => p === null)) return null;
-  return (parts[0] ?? 0) + (parts[1] ?? 0) + (parts[2] ?? 0);
+  return parts.reduce<number>((n, p) => n + (p ?? 0), 0);
 }

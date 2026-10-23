@@ -113,7 +113,7 @@ export const NAV: NavGroup[] = [
     icon: 'medical',
     items: [
       { tab: 'sos', label: 'SOS alerts', hint: 'Live student emergencies', icon: 'alert' },
-      { tab: 'medicalLeaves', label: 'Medical leaves', hint: 'Doctor → HOD → teachers', icon: 'medical' },
+      { tab: 'medicalLeaves', label: 'Medical leaves', hint: 'Doctor → DR → Dean → HOD', icon: 'medical' },
       { tab: 'complaints', label: 'Complaints & doubts', hint: 'From students', icon: 'chat' },
       { tab: 'reports', label: 'Reported posts', hint: 'Lost & Found flags', icon: 'alert' },
     ],
