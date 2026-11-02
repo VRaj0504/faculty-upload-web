@@ -1,3 +1,4 @@
+import { clearCached } from './cachedCollection';
 import { useState } from 'react';
 import { doc, writeBatch } from 'firebase/firestore';
 import { db } from './firebaseConfig';
@@ -325,6 +326,7 @@ function RosterUpload() {
 
           batch.set(ref, student, { merge: true });
         });
+        clearCached('roster');
         await batch.commit();
       }
       setStatus(`Uploaded ${preview.length} students to the roster.`);

@@ -14,6 +14,7 @@ import {
 import type { ExamEntry, ExamTypeId } from './examSheetParser';
 import { uploadExamSheetPdf } from './examPdf';
 import ExamEditor from './ExamEditor';
+import { DEFAULT_GUIDELINES } from './examVenues';
 import { examClassTemplate, readSheetRows } from './xlsxTemplates';
 
 const SEMESTERS = [1, 2, 3, 4, 5, 6, 7, 8] as const;
@@ -31,6 +32,7 @@ function ExamScheduleManual() {
   const [loadingExisting, setLoadingExisting] = useState(false);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState('');
+  const [guidelines, setGuidelines] = useState(DEFAULT_GUIDELINES.join('\n'));
 
   const ready = !!branch && !!semester && !!examType;
   const examLabel = EXAM_TYPES.find((t) => t.id === examType)?.label ?? '';
@@ -62,6 +64,7 @@ function ExamScheduleManual() {
         if (snap.exists()) {
           const data = snap.data();
           setEntries((data.entries ?? []) as ExamEntry[]);
+          if (Array.isArray(data.guidelines)) setGuidelines((data.guidelines as string[]).join('\n'));
           setSourcePdf(data.sourcePdfUrl ? { url: data.sourcePdfUrl, name: data.sourcePdfName ?? 'Official date sheet' } : null);
           setExisting(true);
           setStatus(`Loaded the published ${examLabel} date sheet — edit any row and save to update it.`);
@@ -145,6 +148,7 @@ function ExamScheduleManual() {
             examType,
             examTypeLabel: examLabel,
             entries: cleanEntries,
+            guidelines: guidelines.split('\n').map((l) => l.trim()).filter(Boolean),
             ...(pdf ? { sourcePdfUrl: pdf.url, sourcePdfName: pdf.name } : {}),
             updatedAt: serverTimestamp(),
             updatedBy: auth.currentUser?.uid ?? 'web-portal',
@@ -276,6 +280,11 @@ function ExamScheduleManual() {
             problemRows={problemRows}
             onRowEdited={(n) => setProblemRows((prev) => prev.filter((r) => r !== n))}
           />
+
+          <div style={{ marginTop: '1rem' }}>
+            <label>Guidelines shown to students (one per line)</label>
+            <textarea rows={5} value={guidelines} onChange={(e) => setGuidelines(e.target.value)} style={{ width: '100%', boxSizing: 'border-box' }} />
+          </div>
 
           {validationError && entries.length > 0 && (
             <p style={{ fontSize: '0.82rem', color: '#b45309', marginTop: '0.75rem' }}>{validationError}</p>

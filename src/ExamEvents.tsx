@@ -16,7 +16,7 @@ import { auth, db } from './firebaseConfig';
 import { loadRoster, type RosterRow } from './examData';
 import { downloadXlsx } from './xlsxTemplates';
 
-type EventType = 'supplementary' | 'makeup' | 'endsem' | 'midsem' | 'other';
+type EventType = 'supplementary' | 'makeup' | 'endsem' | 'midsem' | 'roomchange' | 'other';
 type RegMode = 'none' | 'backlogs' | 'subjects';
 
 const TYPE_LABEL: Record<EventType, string> = {
@@ -24,6 +24,7 @@ const TYPE_LABEL: Record<EventType, string> = {
   makeup: 'Make-up exam',
   endsem: 'End-semester exam',
   midsem: 'Mid-semester exam',
+  roomchange: 'Room / timing change',
   other: 'Exam notice',
 };
 

@@ -159,7 +159,7 @@ export default function AttendanceExport() {
             </tbody>
           </table>
           {!prep?.excusals.ok && (
-            <p className="res-hint">Approved event excusals couldn’t be read, so they show as absences in this file.</p>
+            <p className="res-hint">Approved event or medical-leave excusals couldn’t be read, so they show as absences in this file.</p>
           )}
           <button type="button" onClick={download} disabled={busy || !totalHeld} style={{ width: '100%', marginTop: '1rem' }}>
             {busy ? 'Preparing…' : totalHeld ? `Download .xlsx — ${ctx.students.length} students` : 'Nothing recorded yet'}

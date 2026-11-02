@@ -107,7 +107,6 @@ function MarkAttendance() {
     const m = new Map<string, Mark>();
     for (const d of existing) {
       d.absentEnrollmentNumbers.forEach((r) => m.set(r, 'A'));
-      d.excusedEnrollmentNumbers?.forEach((r) => m.set(r, 'OD'));
     }
     setMarks(m);
     setDirty(false);
@@ -300,7 +299,7 @@ function MarkAttendance() {
         Everyone starts present — mark only who’s absent. Students see their percentage in the app as soon as you save.
       </p>
 
-      <AttendanceClassPicker subjectMode="required" onChange={setCtx} />
+      <AttendanceClassPicker subjectMode="required" onChange={setCtx} quickPick />
 
       {ctx && (
         <>
@@ -463,14 +462,14 @@ function MarkAttendance() {
                         </small>
                       </button>
                       <div className="att-seg" role="radiogroup" aria-label={`${s.name} attendance`}>
-                        {(['P', 'A', 'OD'] as Mark[]).map((v) => (
+                        {(['P', 'A'] as Mark[]).map((v) => (
                           <button
                             key={v}
                             type="button"
                             role="radio"
                             aria-checked={m === v}
                             className={m === v ? 'on' : ''}
-                            title={v === 'P' ? 'Present' : v === 'A' ? 'Absent' : 'On duty / leave — counts as attended'}
+                            title={v === 'P' ? 'Present' : 'Absent'}
                             onClick={() => setMark(s.regNo, v)}
                           >
                             {v}

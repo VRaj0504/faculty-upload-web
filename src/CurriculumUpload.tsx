@@ -1,3 +1,4 @@
+import { clearCached } from './cachedCollection';
 import { useState } from 'react';
 import { doc, writeBatch } from 'firebase/firestore';
 import { db } from './firebaseConfig';
@@ -112,6 +113,7 @@ function CurriculumUpload() {
           const ref = doc(db, 'curriculum', docId);
           batch.set(ref, subject);
         });
+        clearCached('curriculum');
         await batch.commit();
       }
       setStatus(`Uploaded ${preview.length} subjects.`);

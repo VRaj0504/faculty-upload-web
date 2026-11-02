@@ -276,7 +276,7 @@ export function parseDateHeader(v: unknown, yearFor: (month: number) => number):
 export type CellKind = 'P' | 'A' | 'E' | 'NA' | 'blank' | 'unknown';
 const PRESENT = new Set(['p', 'present', '1', 'y', 'yes', 'true', '✓', '✔', '✅', 'pr', 'pres']);
 const ABSENT = new Set(['a', 'ab', 'abs', 'absent', '0', 'n', 'no', 'false', 'x', '✗', '✘', '❌']);
-const EXCUSED = new Set(['od', 'ml', 'l', 'le', 'leave', 'e', 'ex', 'excused', 'dl', 'duty', 'onduty']);
+const EXCUSED = new Set(['ml', 'l', 'le', 'leave', 'e', 'ex', 'excused']);
 
 export function classifyCell(v: unknown): CellKind {
   if (v === undefined || v === null) return 'blank';
@@ -586,7 +586,18 @@ export function planRegister(
 }
 
 export type ExportSubject = { code: string; name: string; sessions: SessionDoc[] };
-export type ExcusalRange = { fromDate: string; toDate: string; eventName?: string };
+export type ExcusalRange = { fromDate: string; toDate: string; eventName?: string; sessions?: string[] };
+
+export function excusalCovers(r: ExcusalRange, date: string, code?: string): boolean {
+  if (date < r.fromDate || date > r.toDate) return false;
+  if (!r.sessions) return true;
+  if (!code) return false;
+  const want = normCode(code);
+  return r.sessions.some((k) => {
+    const i = k.lastIndexOf('|');
+    return k.slice(i + 1) === date && normCode(k.slice(0, i)) === want;
+  });
+}
 type Cell = string | number | null;
 export type SheetSpec = { name: string; rows: Cell[][]; widths?: number[] };
 
@@ -608,7 +619,7 @@ export function studentRecord(
     classes++;
     const absent = d.absentEnrollmentNumbers.includes(s.regNo);
     const excused = d.excusedEnrollmentNumbers?.includes(s.regNo);
-    if (excused || (absent && excusals.some((r) => d.date >= r.fromDate && d.date <= r.toDate))) {
+    if (excused || (absent && excusals.some((r) => excusalCovers(r, d.date, d.subjectCode)))) {
       attended += w;
       return 'OD';
     }
@@ -694,7 +705,7 @@ export function buildSemesterWorkbook(params: {
   const key: SheetSpec = {
     name: 'Key',
     rows: [
-      ['P = present, A = absent, OD = on duty / leave / approved event (counts as attended)'],
+      ['P = present, A = absent'],
       ['— = not this student’s class (another lab batch, branch or specialization) — not counted'],
       ['Hours row: 1 = lecture, 2 = 2-hour lab/workshop. Attendance % = hours attended ÷ hours held.'],
       ['L2, L3 = second or third class of the same subject on that day'],
@@ -740,6 +751,20 @@ export function gridFromPdfPages(pages: PdfTextItem[][]): unknown[][] | { error:
     else lines.push([t]);
   }
   lines.forEach((l) => l.sort((a, b) => a.cx - b.cx));
+  for (const l of lines) {
+    for (let i = 0; i < l.length - 1; i++) {
+      const a = l[i];
+      const b = l[i + 1];
+      if (!/^(UG|PG)\d{2}[A-Z]{2,5}\d{0,3}$/i.test(a.s) || !/^\d{1,3}$/.test(b.s)) continue;
+      const aEnd = a.x0 + 2 * (a.cx - a.x0);
+      if (b.x0 - aEnd > 3) continue;
+      const bEnd = b.x0 + 2 * (b.cx - b.x0);
+      const joined = a.s + b.s;
+      if (!REG_TOKEN.test(joined) || joined.replace(/^(UG|PG)\d{2}[A-Z]{2,5}/i, '').length > 3) continue;
+      l.splice(i, 2, { ...a, s: joined, cx: (a.x0 + bEnd) / 2 });
+      i--;
+    }
+  }
 
   const isDay = (s: string) => /^\d{1,2}$/.test(s) && +s >= 1 && +s <= 31;
   let headerIdx = -1;

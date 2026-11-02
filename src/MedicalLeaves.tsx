@@ -12,8 +12,13 @@ import {
   Timestamp,
 } from 'firebase/firestore';
 import { auth, db } from './firebaseConfig';
+import SegmentedControl from './SegmentedControl';
+import { TEMPLATE_URL, watchQueue, watchRecords } from './medicalData';
+import type { Med } from './medicalData';
+import { MySignature, Records, ReviewCard } from './MedicalFlow';
+import type { Me } from './MedicalFlow';
 
-type Role = 'doctor' | 'dr' | 'dean' | 'hod';
+type Role = 'doctor' | 'hod' | 'dean' | 'jr' | 'administrator';
 type Stage = Role | 'teachers' | 'done' | 'rejected';
 type Decision = { decision: 'approved' | 'rejected'; remark: string | null; by: string; byName: string };
 
@@ -28,15 +33,18 @@ type Leave = {
   reason: string;
   medicalReportUrl?: string | null;
   doctorName?: string;
-  drName?: string;
-  deanName?: string;
   hodName?: string;
-  drEmail?: string;
+  deanName?: string;
+  jrName?: string;
+  administratorName?: string;
   deanEmail?: string;
+  jrEmail?: string;
+  administratorEmail?: string;
   doctorDecision?: Decision;
-  drDecision?: Decision;
-  deanDecision?: Decision;
   hodDecision?: Decision;
+  deanDecision?: Decision;
+  jrDecision?: Decision;
+  administratorDecision?: Decision;
   teachersTotal?: number;
   teachersConfirmed?: number;
   unmatchedFaculty?: string[];
@@ -57,20 +65,22 @@ type Ack = {
   createdAt: Timestamp | null;
 };
 
-const ROLES: Role[] = ['doctor', 'dr', 'dean', 'hod'];
+const ROLES: Role[] = ['doctor', 'hod', 'dean', 'jr', 'administrator'];
 
 const ROLE_LABEL: Record<Role, string> = {
   doctor: 'Doctor',
-  dr: 'Deputy Registrar',
-  dean: 'Dean (Academics)',
   hod: 'HOD',
+  dean: 'Dean',
+  jr: 'Joint Registrar',
+  administrator: 'Administrator',
 };
 
 const ROLE_SECTION: Record<Role, string> = {
   doctor: 'Check report',
-  dr: 'Approve as Deputy Registrar',
-  dean: 'Approve as Dean',
   hod: 'Approve as HOD',
+  dean: 'Approve as Dean',
+  jr: 'Approve as Joint Registrar',
+  administrator: 'Approve as Administrator',
 };
 
 const newestFirst = <T extends { createdAt: Timestamp | null }>(xs: T[]) =>
@@ -94,10 +104,10 @@ function isoDaysAgo(n: number): string {
 }
 
 function chainOf(l: Leave): Role[] {
-  const c: Role[] = ['doctor'];
-  if (l.drEmail) c.push('dr');
+  const c: Role[] = ['doctor', 'hod'];
   if (l.deanEmail) c.push('dean');
-  c.push('hod');
+  if (l.jrEmail) c.push('jr');
+  if (l.administratorEmail) c.push('administrator');
   return c;
 }
 
@@ -108,7 +118,7 @@ function nextStage(role: Role, l: Leave): Stage {
 }
 
 function nameOf(role: Role, l: Leave): string {
-  const n = role === 'doctor' ? l.doctorName : role === 'dr' ? l.drName : role === 'dean' ? l.deanName : l.hodName;
+  const n = l[`${role}Name` as const];
   return n || `the ${ROLE_LABEL[role]}`;
 }
 
@@ -120,8 +130,11 @@ function stageLabel(l: Leave): string {
 }
 
 export default function MedicalLeaves() {
-  const [me, setMe] = useState<{ uid: string; email: string; name: string } | null>(null);
-  const [byRole, setByRole] = useState<Record<Role, Leave[]>>({ doctor: [], dr: [], dean: [], hod: [] });
+  const [me, setMe] = useState<Me | null>(null);
+  const [tab, setTab] = useState<'todo' | 'records' | 'signature'>('todo');
+  const [queue, setQueue] = useState<Med[]>([]);
+  const [records, setRecords] = useState<Med[]>([]);
+  const [byRole, setByRole] = useState<Record<Role, Leave[]>>({ doctor: [], hod: [], dean: [], jr: [], administrator: [] });
   const [acks, setAcks] = useState<Ack[]>([]);
   const [remarks, setRemarks] = useState<Record<string, string>>({});
   const [declinedDraft, setDeclinedDraft] = useState<Record<string, string[]>>({});
@@ -133,8 +146,13 @@ export default function MedicalLeaves() {
     if (!u) return;
     getDoc(doc(db, 'users', u.uid))
       .then((snap) => {
-        const d = snap.data() as { email?: string; name?: string } | undefined;
-        setMe({ uid: u.uid, email: (d?.email ?? u.email ?? '').toLowerCase(), name: d?.name ?? u.email ?? 'Faculty' });
+        const d = snap.data() as { email?: string; name?: string; role?: string; isAdmin?: boolean } | undefined;
+        setMe({
+          uid: u.uid,
+          email: (d?.email ?? u.email ?? '').toLowerCase(),
+          name: d?.name ?? u.email ?? 'Faculty',
+          admin: d?.role === 'admin' || d?.isAdmin === true,
+        });
       })
       .catch(() => setError('Could not load your profile.'));
   }, []);
@@ -159,13 +177,15 @@ export default function MedicalLeaves() {
         (s) => setAcks(newestFirst(s.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<Ack, 'id'>) })))),
         fail,
       ),
+      watchQueue(me.email, setQueue, fail),
+      watchRecords(me.email, me.admin, setRecords, fail),
     ];
     return () => unsubs.forEach((u) => u());
-  }, [me?.email]);
+  }, [me?.email, me?.admin]);
 
   const pending = useMemo(() => {
     const out = {} as Record<Role, Leave[]>;
-    for (const r of ROLES) out[r] = byRole[r].filter((l) => l.stage === r);
+    for (const r of ROLES) out[r] = byRole[r].filter((l) => l.stage === r && (l as { flow?: number }).flow !== 2);
     return out;
   }, [byRole]);
   const pendingCount = ROLES.reduce((n, r) => n + pending[r].length, 0);
@@ -177,7 +197,7 @@ export default function MedicalLeaves() {
     const out: { leave: Leave; role: Role }[] = [];
     for (const r of ROLES) {
       for (const l of byRole[r]) {
-        if (l.stage === r || seen.has(l.id)) continue;
+        if (l.stage === r || seen.has(l.id) || (l as { flow?: number }).flow === 2) continue;
         seen.add(l.id);
         out.push({ leave: l, role: r });
       }
@@ -381,16 +401,53 @@ export default function MedicalLeaves() {
     );
   };
 
-  const nothing = pendingCount + pendingAcks.length === 0;
+  const nothing = pendingCount + pendingAcks.length + queue.length === 0;
+  const todoN = queue.length + pendingCount + pendingAcks.length;
 
   return (
-    <div style={{ maxWidth: 760, margin: '0 auto', padding: '1rem 0 3rem' }}>
-      <h1 style={{ fontSize: '1.5rem', margin: '0 0 0.3rem' }}>Medical Leaves</h1>
-      <p style={{ color: 'var(--ink-soft)', margin: '0 0 1.2rem', fontSize: '0.9rem' }}>
-        Doctor → Deputy Registrar → Dean → HOD. Once approved, the student's classes in those dates count as present; each teacher can
-        still choose not to excuse their own classes. You only see the steps that are yours.
-      </p>
+    <div className="med-page">
+      <div className="med-top">
+        <div>
+          <h1>Medical Leaves</h1>
+          <p className="med-soft">
+            Student → Academic Office → Medical Officer → HOD, Associate Dean and Joint Registrar (any order). Every step is stamped, signed and
+            logged. Approved leave counts the missed classes as present.
+          </p>
+        </div>
+        <a className="button-secondary med-tpl" href={TEMPLATE_URL} target="_blank" rel="noreferrer">
+          Blank form (PDF)
+        </a>
+      </div>
+      <SegmentedControl
+        value={tab}
+        onChange={setTab}
+        options={[
+          { value: 'todo', label: `To do${todoN ? ` · ${todoN}` : ''}` },
+          { value: 'records', label: `All records${records.length ? ` · ${records.length}` : ''}` },
+          { value: 'signature', label: 'My signature' },
+        ]}
+      />
       {error && <p className="error-text">{error}</p>}
+      {tab === 'records' && me && (
+        <div style={{ marginTop: '1.2rem' }}>
+          <Records list={records} me={me} />
+        </div>
+      )}
+      {tab === 'signature' && me && (
+        <div style={{ marginTop: '1.2rem' }}>
+          <MySignature me={me} />
+        </div>
+      )}
+      {tab === 'todo' && (
+      <div style={{ marginTop: '1.2rem' }}>
+      {me && queue.length > 0 && (
+        <>
+          <p className="eyebrow">Official medical leave form · {queue.length}</p>
+          {queue.map((m) => (
+            <ReviewCard key={m.id} m={m} me={me} startOpen />
+          ))}
+        </>
+      )}
 
       {ROLES.map((r) =>
         pending[r].length > 0 ? (
@@ -438,6 +495,8 @@ export default function MedicalLeaves() {
             ))}
           </div>
         </>
+      )}
+      </div>
       )}
     </div>
   );

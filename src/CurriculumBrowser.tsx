@@ -1,3 +1,4 @@
+import { clearCached } from './cachedCollection';
 import { useState, useEffect, useMemo } from 'react';
 import { collection, getDocs, doc, setDoc, deleteDoc } from 'firebase/firestore';
 import { db } from './firebaseConfig';
@@ -89,6 +90,7 @@ function CurriculumBrowser() {
     setBusyId(row.id);
     try {
 
+      clearCached('curriculum');
       await setDoc(
         doc(db, 'curriculum', row.id),
         {
@@ -114,6 +116,7 @@ function CurriculumBrowser() {
       return;
     setBusyId(row.id);
     try {
+      clearCached('curriculum');
       await deleteDoc(doc(db, 'curriculum', row.id));
       setRows((prev) => prev.filter((r) => r.id !== row.id));
     } catch (err: any) {
@@ -142,6 +145,7 @@ function CurriculumBrowser() {
     }
     setAdding(true);
     try {
+      clearCached('curriculum');
       await setDoc(doc(db, 'curriculum', id), { branch, semester: addDraft.semester, code, name, credits: addDraft.credits });
       setRows((prev) =>
         [...prev.filter((r) => r.id !== id), { id, branch, semester: addDraft.semester, code, name, credits: addDraft.credits }].sort(

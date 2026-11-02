@@ -1,7 +1,9 @@
+import { getDocsCached, clearCached } from './cachedCollection';
 import { useEffect, useMemo, useState } from 'react';
-import { collection, deleteDoc, doc, getDoc, getDocs } from 'firebase/firestore';
+import { deleteDoc, doc, getDoc } from 'firebase/firestore';
 import { auth, db } from './firebaseConfig';
 import { FACULTY_LEGEND } from './facultyLegend';
+import { facultyPartsOf, legendName, teaches, initialsForName, sameInitials } from './teachingSlots';
 
 type Slot = {
   startTime: string;
@@ -45,56 +47,6 @@ function formatTime(time: string): string {
   return `${h12}:${String(m).padStart(2, '0')} ${period}`;
 }
 
-function facultyPartsOf(faculty: string): string[] {
-  return String(faculty ?? '')
-    .split(/[/,&;]+/)
-    .map((part) => part.trim().toUpperCase())
-    .filter(Boolean);
-}
-
-const looseKey = (s: string) => String(s ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
-const EXACT_KEYS = new Set(Object.keys(FACULTY_LEGEND).map((k) => k.trim().toUpperCase()));
-
-function sameInitials(part: string, mine: string): boolean {
-  const a = part.trim().toUpperCase();
-  const b = mine.trim().toUpperCase();
-  if (a === b) return true;
-  if (looseKey(a) !== looseKey(b)) return false;
-
-  return !EXACT_KEYS.has(a) || !EXACT_KEYS.has(b);
-}
-
-function legendName(code: string): string | undefined {
-  const t = code.trim().toUpperCase();
-  const exact = Object.entries(FACULTY_LEGEND).find(([k]) => k.trim().toUpperCase() === t);
-  if (exact) return exact[1].trim();
-  const loose = Object.entries(FACULTY_LEGEND).find(([k]) => looseKey(k) === looseKey(code));
-  return loose?.[1].trim();
-}
-
-function teaches(slotFaculty: string, initials: string): boolean {
-  return facultyPartsOf(slotFaculty).some((p) => sameInitials(p, initials));
-}
-
-const nameTokens = (n: string) =>
-  String(n ?? '')
-    .toLowerCase()
-    .replace(/\b(dr|prof|mr|mrs|ms|shri|smt)\b\.?/g, ' ')
-    .replace(/[^a-z\s]/g, ' ')
-    .split(/\s+/)
-    .filter((t) => t.length > 1);
-
-function initialsForName(name: string): string | null {
-  const mine = nameTokens(name);
-  if (mine.length < 2) return null;
-  const hits = Object.entries(FACULTY_LEGEND).filter(([, full]) => {
-    const theirs = nameTokens(full);
-    const common = theirs.filter((t) => mine.includes(t)).length;
-    return common >= 2 || (common >= 1 && theirs.length === 1);
-  });
-  return hits.length === 1 ? hits[0][0] : null;
-}
-
 function MyTimetable({ role, name }: { role: string | null; name: string }) {
   const isAdmin = role === 'admin';
   const [ownInitials, setOwnInitials] = useState<string | null | undefined>(undefined);
@@ -130,11 +82,11 @@ function MyTimetable({ role, name }: { role: string | null; name: string }) {
   }, [name]);
 
   useEffect(() => {
-    getDocs(collection(db, 'timetable'))
+    getDocsCached('timetable')
       .then((snap) => setTimetables(snap.docs.map((d) => ({ ...(d.data() as Omit<TimetableDoc, 'id'>), id: d.id }))))
       .catch((err) => setError(`Could not load timetables: ${err.message}`));
 
-    getDocs(collection(db, 'roster'))
+    getDocsCached('roster')
       .then((snap) => {
         const set = new Set<string>();
         snap.forEach((d) => {
@@ -177,6 +129,7 @@ function MyTimetable({ role, name }: { role: string | null; name: string }) {
     setDeleting(copy.id);
     setError('');
     try {
+      clearCached('timetable');
       await deleteDoc(doc(db, 'timetable', copy.id));
       setTimetables((tts) => (tts ?? []).filter((t) => t.id !== copy.id));
     } catch (err) {

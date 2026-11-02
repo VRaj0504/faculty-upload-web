@@ -1,10 +1,10 @@
+import { getDocsCached } from './cachedCollection';
 import { useEffect, useState } from 'react';
 import {
   collection,
   addDoc,
   deleteDoc,
   doc,
-  getDocs,
   query as fsQuery,
   where,
   orderBy,
@@ -48,7 +48,7 @@ const isPg = (e: RosterEntry) => e.program === 'PG' || /^PG/i.test(e.regNo);
 const inBatch = (e: RosterEntry, b: Batch) => e.admissionYear === b.year && isPg(e) === b.pg;
 
 async function getRosterEntries(): Promise<RosterEntry[]> {
-  const snap = await getDocs(collection(db, 'roster'));
+  const snap = await getDocsCached('roster');
   return snap.docs.map((d) => ({ ...(d.data() as Omit<RosterEntry, 'regNo'>), regNo: d.id }));
 }
 

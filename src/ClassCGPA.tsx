@@ -1,3 +1,4 @@
+import { getDocsCached } from './cachedCollection';
 import { useState, useEffect, useMemo } from 'react';
 import { collection, getDocs, query, where } from 'firebase/firestore';
 import { db } from './firebaseConfig';
@@ -31,7 +32,7 @@ function ClassCGPA() {
   const [dataLoading, setDataLoading] = useState(true);
 
   useEffect(() => {
-    getDocs(collection(db, 'roster')).then((snap) => {
+    getDocsCached('roster').then((snap) => {
       setRoster(
         snap.docs
           .filter((d) => d.data().reviewer !== true)

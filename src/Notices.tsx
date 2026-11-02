@@ -1,10 +1,10 @@
+import { getDocsCached } from './cachedCollection';
 import { useEffect, useState } from 'react';
 import {
   addDoc,
   collection,
   deleteDoc,
   doc,
-  getDocs,
   limit,
   onSnapshot,
   orderBy,
@@ -137,7 +137,7 @@ export default function Notices() {
   const [notices, setNotices] = useState<Notice[]>([]);
 
   useEffect(() => {
-    getDocs(collection(db, 'roster'))
+    getDocsCached('roster')
       .then((s) =>
         setRoster(
           s.docs

@@ -5,11 +5,11 @@
   "targets": {
     "iiit-surat-app-6643d": {
       "hosting": {
-        "main": [
-          "collegego-iiitsurat"
-        ],
         "old": [
           "faculty-upload-web"
+        ],
+        "main": [
+          "collegego-faculty"
         ]
       }
     }

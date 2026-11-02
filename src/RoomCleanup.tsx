@@ -1,3 +1,4 @@
+import { clearCached } from './cachedCollection';
 import { useEffect, useMemo, useState } from 'react';
 import { collection, getDocs, doc, writeBatch, serverTimestamp } from 'firebase/firestore';
 import { db } from './firebaseConfig';
@@ -171,6 +172,7 @@ export default function RoomCleanup() {
       for (let i = 0; i < changedDocs.length; i += 400) {
         const batch = writeBatch(db);
         for (const c of changedDocs.slice(i, i + 400)) batch.update(doc(db, 'timetable', c.id), { days: c.days, lastRoomCleanup: serverTimestamp() });
+        clearCached('timetable');
         await batch.commit();
       }
       let remembered = true;

@@ -1,3 +1,4 @@
+import VenueSelect from './VenueSelect';
 import { useMemo, useState } from 'react';
 import { branchesOf, type ExamEntry } from './examSheetParser';
 import { curriculum } from './curriculum';
@@ -273,12 +274,7 @@ export default function ExamGrid({
                                     />
                                   </div>
                                 )}
-                                <input
-                                  className="exam-chip-venue"
-                                  placeholder="Venue (optional)"
-                                  value={e.venue}
-                                  onChange={(ev) => patch(index, { venue: ev.target.value })}
-                                />
+                                <VenueSelect className="exam-chip-venue" value={e.venue} onChange={(v) => patch(index, { venue: v })} />
                                 {repeated && <span className="exam-chip-note">Also on another day</span>}
                               </div>
                             );

@@ -1,3 +1,4 @@
+import { clearCached } from './cachedCollection';
 import { useState, useEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { collection, getDocs, doc, setDoc, deleteDoc, query, where, limit } from 'firebase/firestore';
@@ -162,6 +163,7 @@ function RosterBrowser({ email, role }: { email: string; role: string | null }) 
     }
     setBusyRegNo(regNo);
     try {
+      clearCached('roster');
       await setDoc(
         doc(db, 'roster', regNo),
         {
@@ -191,6 +193,7 @@ function RosterBrowser({ email, role }: { email: string; role: string | null }) 
     if (!confirm(`Remove ${row.name} (${row.regNo}) from the roster? This can't be undone.`)) return;
     setBusyRegNo(row.regNo);
     try {
+      clearCached('roster');
       await deleteDoc(doc(db, 'roster', row.regNo));
       setRows((prev) => prev.filter((r) => r.regNo !== row.regNo));
     } catch (err: any) {
@@ -219,6 +222,7 @@ function RosterBrowser({ email, role }: { email: string; role: string | null }) 
         section: addDraft.section.trim(),
         admissionYear: Number(addDraft.admissionYear),
       };
+      clearCached('roster');
       await setDoc(doc(db, 'roster', regNo), {
         name: entry.name,
         branch: entry.branch,

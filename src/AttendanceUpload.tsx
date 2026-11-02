@@ -14,6 +14,20 @@ import {
 } from './attendanceCore';
 import { existingIds, splitByBranch, writeSessions } from './attendanceData';
 import { downloadXlsx } from './xlsxTemplates';
+import { collection, getDocs } from 'firebase/firestore';
+import { db } from './firebaseConfig';
+import { holidayName, isoOf, normCode } from './attendanceCore';
+
+const DAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const SHORT = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const flatSec = (branch: string, section: string | null | undefined) => {
+  const b = String(branch ?? '').toUpperCase().replace(/[\s_-]+/g, '');
+  let x = String(section ?? '').toUpperCase().replace(/[\s_-]+/g, '').replace(/^(SECTION|SEC)/, '');
+  if (b && x.startsWith(b)) x = x.slice(b.length);
+  return x;
+};
+const baseCode = (c: string) => normCode(c).replace(/^([A-Z]{2,4}\d{3})[TP]$/, '$1');
+const ddmmyyyy = (iso: string) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)}`;
 
 type Opts = { blank: 'present' | 'absent'; unknown: 'present' | 'absent'; missing: 'present' | 'absent' | 'skip' };
 
@@ -31,6 +45,10 @@ export default function AttendanceUpload() {
   const [progress, setProgress] = useState<string>('');
   const [inputKey, setInputKey] = useState(0);
   const [fromPortal, setFromPortal] = useState(false);
+  const [perDay, setPerDay] = useState<number[]>([0, 0, 0, 0, 0, 0]);
+  const [fromTimetable, setFromTimetable] = useState(false);
+  const [rangeFrom, setRangeFrom] = useState('');
+  const [rangeTo, setRangeTo] = useState(todayIso());
 
   const ctxKey = ctx ? `${ctx.batch!.key}|${ctx.cls!.key}|${ctx.semester}|${ctx.subject?.code}|${ctx.specialization}` : '';
 
@@ -39,6 +57,67 @@ export default function AttendanceUpload() {
     if (ctx?.subject) setSheetHours(/\b(lab|laboratory|workshop|practical)\b/i.test(ctx.subject.name) ? 2 : 1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ctxKey]);
+
+  useEffect(() => {
+    if (!ctx?.subject || !ctx.cls) return;
+    const win = semesterWindow(ctx.batch!.year, ctx.semester!);
+    setRangeFrom(win.from);
+    setRangeTo(todayIso() < win.to ? todayIso() : win.to);
+    setPerDay([0, 0, 0, 0, 0, 0]);
+    setFromTimetable(false);
+    let live = true;
+    const want = baseCode(ctx.subject.code);
+    getDocs(collection(db, 'timetable'))
+      .then((snap) => {
+        if (!live) return;
+        const counts = [0, 0, 0, 0, 0, 0];
+        let hit = false;
+        for (const t of ctx.cls!.targets) {
+          const docs = snap.docs
+            .map((d) => d.data() as { branch?: string; semester?: number; section?: string; days?: { day: string; slots?: { subjectCode?: string }[] }[] })
+            .filter((d) => String(d.branch ?? '').toUpperCase() === t.branch.toUpperCase() && Number(d.semester) === ctx.semester);
+          const mine = docs.filter((d) => flatSec(t.branch, d.section) === flatSec(t.branch, t.section));
+          const pick = mine.length ? mine : docs.length === 1 ? docs : [];
+          for (const d of pick) {
+            for (const day of d.days ?? []) {
+              const i = DAY_NAMES.indexOf(day.day);
+              if (i < 0) continue;
+              const n = (day.slots ?? []).filter((sl) => baseCode(sl.subjectCode ?? '') === want).length;
+              if (n) {
+                counts[i] = Math.max(counts[i], n);
+                hit = true;
+              }
+            }
+          }
+        }
+        if (hit) {
+          setPerDay(counts);
+          setFromTimetable(true);
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ctxKey]);
+
+  const classDates = useMemo(() => {
+    const out: { date: string; lecture: number; of: number }[] = [];
+    if (!rangeFrom || !rangeTo || rangeFrom > rangeTo) return out;
+    const d = new Date(`${rangeFrom}T00:00:00`);
+    const end = new Date(`${rangeTo}T00:00:00`);
+    for (let i = 0; d <= end && i < 400; i++, d.setDate(d.getDate() + 1)) {
+      const wd = d.getDay();
+      if (wd === 0) continue;
+      const n = perDay[wd - 1];
+      if (!n) continue;
+      const iso = isoOf(d);
+      if (holidayName(iso, ctx?.holidays)) continue;
+      for (let l = 1; l <= n; l++) out.push({ date: iso, lecture: l, of: n });
+    }
+    return out;
+  }, [rangeFrom, rangeTo, perDay, ctx]);
 
   const yearFor = useMemo(() => {
     if (!ctx) return (m: number) => (m >= 7 ? new Date().getFullYear() : new Date().getFullYear());
@@ -216,22 +295,24 @@ export default function AttendanceUpload() {
 
   const template = async () => {
     if (!ctx) return;
+    const cols = classDates.length ? classDates : [];
+    const heads = cols.map((c) => (c.of > 1 ? `${ddmmyyyy(c.date)} L${c.lecture}` : ddmmyyyy(c.date)));
     const rows: (string | number | null)[][] = [
-      ['Reg. No.', 'Name', '12/08/2026', '13/08/2026', '14/08/2026'],
-      ...ctx.students.map((s) => [s.regNo, s.name, null, null, null]),
+      ['Reg. No.', 'Name', ...(heads.length ? heads : ['DD/MM/YYYY'])],
+      ...ctx.students.map((s) => [s.regNo, s.name, ...(heads.length ? heads.map(() => 'P') : [null])]),
     ];
     await downloadXlsx(`Register_${(ctx.cls!.section ?? ctx.cls!.label).replace(/[^A-Za-z0-9]+/g, '-')}_${ctx.subject?.code ?? 'subject'}.xlsx`, [
-      { name: 'Register', rows, widths: [14, 28, 12, 12, 12] },
+      { name: 'Register', rows, widths: [14, 28, ...(heads.length ? heads : ['x']).map((h) => Math.max(11, h.length + 1))] },
       {
         name: 'How to fill',
         rows: [
-          ['One column per class: put the date as the heading (12/08/2026, 12 Aug, or an Excel date).'],
-          ['Two classes on the same day: use two columns with the same date (or write “12/08 L2”).'],
-          ['Cells: P = present, A = absent, OD / ML = on duty or leave (counts as attended).'],
-          ['Blank cells are fine — you choose on upload whether blank means present or absent.'],
-          ['Extra columns like Total or % are ignored.'],
+          ['Every student is already marked P (present) for every class.'],
+          ['Only change the absent students to A. That’s all.'],
+          ['Class didn’t happen that day? Delete that whole column.'],
+          ['Extra class? Add a column with the date as heading, like 12/08/2026 (two on one day: 12/08/2026 L1 and 12/08/2026 L2).'],
+          ['Save the file and upload it on the same page.'],
         ],
-        widths: [100],
+        widths: [110],
       },
     ]);
   };
@@ -240,30 +321,66 @@ export default function AttendanceUpload() {
 
   return (
     <div className="card att-card">
-      <h1 style={{ fontSize: '1.5rem' }}>Upload old attendance (Excel)</h1>
+      <h1 style={{ fontSize: '1.5rem' }}>Upload attendance from Excel</h1>
       <p className="res-hint">
-        For registers kept in Excel: one row per student, one column per class date, for one subject. You’ll see exactly what
-        will be saved before anything is written.
+        Download your class register with every class date and student already filled in as present, mark the absentees as A, and
+        upload it back. You’ll see exactly what will be saved before anything is written.
       </p>
 
-      <AttendanceClassPicker subjectMode="required" onChange={setCtx} />
+      <h3 style={{ margin: '1rem 0 0.4rem' }}>1. Class and subject</h3>
+      <AttendanceClassPicker subjectMode="required" onChange={setCtx} quickPick />
 
       {ctx && (
         <>
+          <h3 style={{ margin: '1.2rem 0 0.4rem' }}>2. Get the register sheet</h3>
           <div className="att-row" style={{ alignItems: 'flex-end' }}>
-            <div className="att-field att-wide">
-              <label>Register file (.xlsx, .xls, .csv or a PDF saved from Excel)</label>
-              <input
-                key={`${ctxKey}#${inputKey}`}
-                type="file"
-                accept=".xlsx,.xls,.csv,.pdf"
-                onChange={(e) => {
-                  const f = e.target.files?.[0];
-                  if (f) readFile(f);
-                }}
-              />
+            <div className="att-field">
+              <label>From</label>
+              <input type="date" value={rangeFrom} max={rangeTo || undefined} onChange={(e) => setRangeFrom(e.target.value)} />
             </div>
-            <button type="button" className="button-secondary" onClick={template}>Get a blank register</button>
+            <div className="att-field">
+              <label>To</label>
+              <input type="date" value={rangeTo} min={rangeFrom || undefined} max={todayIso()} onChange={(e) => setRangeTo(e.target.value)} />
+            </div>
+          </div>
+          <div className="att-field" style={{ marginTop: '0.6rem' }}>
+            <label>
+              Days this subject is taught
+              {fromTimetable ? ' (from your timetable)' : ' (tick the days)'}
+            </label>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.9rem', marginTop: '0.3rem' }}>
+              {SHORT.map((d, i) => (
+                <label key={d} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', fontWeight: 600 }}>
+                  <input
+                    type="checkbox"
+                    style={{ width: 'auto' }}
+                    checked={perDay[i] > 0}
+                    onChange={(e) => setPerDay((p) => p.map((n, k) => (k === i ? (e.target.checked ? Math.max(1, n) : 0) : n)))}
+                  />
+                  {d}
+                  {perDay[i] > 1 ? ` ×${perDay[i]}` : ''}
+                </label>
+              ))}
+            </div>
+          </div>
+          <div className="att-row" style={{ alignItems: 'center', marginTop: '0.6rem' }}>
+            <button type="button" className="button-secondary" onClick={template} disabled={!classDates.length}>
+              {classDates.length ? `Download register (${classDates.length} classes, ${ctx.students.length} students)` : 'Tick at least one day'}
+            </button>
+          </div>
+          <p className="res-hint">Holidays and breaks are left out. Already have your own Excel register? Skip this and upload it below.</p>
+
+          <h3 style={{ margin: '1.2rem 0 0.4rem' }}>3. Upload the filled register</h3>
+          <div className="att-field att-wide">
+            <input
+              key={`${ctxKey}#${inputKey}`}
+              type="file"
+              accept=".xlsx,.xls,.csv,.pdf"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) readFile(f);
+              }}
+            />
           </div>
 
           {book && book.names.length > 1 && (
@@ -295,6 +412,18 @@ export default function AttendanceUpload() {
 
               <div className="att-row">
                 <div className="att-field">
+                  <label>Each class in this sheet is</label>
+                  <select value={sheetHours} onChange={(e) => setSheetHours(Number(e.target.value))}>
+                    <option value={1}>A lecture (1 hour)</option>
+                    <option value={2}>A lab / workshop (2 hours)</option>
+                    <option value={3}>A lab / workshop (3 hours)</option>
+                  </select>
+                </div>
+              </div>
+              <details open={plan.unknownValues.length > 0 || plan.missingFromSheet.length > 0} style={{ marginTop: '0.6rem' }}>
+                <summary style={{ cursor: 'pointer', fontWeight: 600 }}>More options</summary>
+              <div className="att-row">
+                <div className="att-field">
                   <label>Blank cell means</label>
                   <select value={opts.blank} onChange={(e) => setOpts({ ...opts, blank: e.target.value as Opts['blank'] })}>
                     <option value="present">Present{guessed === 'present' ? ' (looks right for this sheet)' : ''}</option>
@@ -309,14 +438,6 @@ export default function AttendanceUpload() {
                     <option value="skip">Not in this class (other lab batch)</option>
                   </select>
                 </div>
-                <div className="att-field">
-                  <label>Each class in this sheet is</label>
-                  <select value={sheetHours} onChange={(e) => setSheetHours(Number(e.target.value))}>
-                    <option value={1}>A lecture (1 hour)</option>
-                    <option value={2}>A lab / workshop (2 hours)</option>
-                    <option value={3}>A lab / workshop (3 hours)</option>
-                  </select>
-                </div>
                 {plan.unknownValues.length > 0 && (
                   <div className="att-field">
                     <label>Other values ({plan.unknownValues.slice(0, 3).map((u) => `“${u.value}”`).join(', ')})</label>
@@ -327,6 +448,7 @@ export default function AttendanceUpload() {
                   </div>
                 )}
               </div>
+              </details>
 
               <div className="att-issues">
                 {plan.missingFromSheet.length > 0 && (
@@ -381,7 +503,6 @@ export default function AttendanceUpload() {
                       <th>Class</th>
                       <th>Present</th>
                       <th>Absent</th>
-                      <th>OD</th>
                       <th>Notes</th>
                     </tr>
                   </thead>
@@ -416,7 +537,6 @@ export default function AttendanceUpload() {
                           </td>
                           <td>{s.present}</td>
                           <td title={s.absent.map((x) => x.regNo).join(', ')}>{s.absent.length}</td>
-                          <td>{s.excused.length || ''}</td>
                           <td className="att-muted">
                             {[
                               f.future && 'future date — skipped',

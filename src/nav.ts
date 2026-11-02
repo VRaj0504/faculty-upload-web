@@ -14,6 +14,7 @@ export type Tab =
   | 'cgpa'
   | 'examStatus'
   | 'examResults'
+  | 'marks'
   | 'examNotices'
   | 'medicalLeaves'
   | 'sos'
@@ -21,15 +22,19 @@ export type Tab =
   | 'reports'
   | 'timetable'
   | 'exams'
+  | 'quizzes'
   | 'holidays'
   | 'roomCleanup'
   | 'curriculum'
   | 'messSubscribers'
-  | 'inboxImports';
+  | 'inboxImports'
+  | 'directorOverview'
+  | 'meetings';
 
 export type Tone = 'blue' | 'mint' | 'lilac' | 'yellow' | 'peach' | 'pink';
 
-export type NavItem = { tab: Tab; label: string; hint: string; icon: IconName };
+export type SubTab = { tab: Tab; label: string; hint: string };
+export type NavItem = { tab: Tab; label: string; hint: string; icon: IconName; sub?: SubTab[] };
 export type NavGroup = {
   id: string;
   label: string;
@@ -38,6 +43,7 @@ export type NavGroup = {
   icon: IconName;
   items: NavItem[];
   prefetch: () => void;
+  leaderOnly?: boolean;
 };
 
 export const toneVars = (tone: Tone) => ({
@@ -46,6 +52,22 @@ export const toneVars = (tone: Tone) => ({
 });
 
 export const NAV: NavGroup[] = [
+  {
+    id: 'director',
+    label: "Director's office",
+    hint: 'Complaints, SOS and meetings',
+    tone: 'blue',
+    icon: 'chart',
+    leaderOnly: true,
+    items: [
+      { tab: 'directorOverview', label: 'Overview', hint: 'Complaints and SOS at a glance', icon: 'chart' },
+      { tab: 'meetings', label: 'Meetings', hint: 'Call students or faculty to a meeting', icon: 'users' },
+    ],
+    prefetch: () => {
+      import('./DirectorDashboard');
+      import('./Meetings');
+    },
+  },
   {
     id: 'teaching',
     label: 'Teaching',
@@ -91,16 +113,43 @@ export const NAV: NavGroup[] = [
     tone: 'pink',
     icon: 'award',
     items: [
-      { tab: 'exams', label: 'Exam schedule', hint: 'Mid & end sem date sheets', icon: 'calendar' },
-      { tab: 'grades', label: 'Assign grades', hint: 'Publish results', icon: 'award' },
-      { tab: 'examResults', label: 'Upload results', hint: 'Official result sheet', icon: 'upload' },
-      { tab: 'examStatus', label: 'Backlogs & status', hint: 'Year back, credits, CGPA', icon: 'alert' },
-      { tab: 'cgpa', label: 'Class CGPA', hint: 'Class overview', icon: 'chart' },
-      { tab: 'examNotices', label: 'Exam notices', hint: 'Supplementary & make-up registration', icon: 'megaphone' },
+      {
+        tab: 'exams',
+        label: 'Exams & quizzes',
+        hint: 'Date sheets, quizzes and exam notices',
+        icon: 'calendar',
+        sub: [
+          { tab: 'exams', label: 'Date sheets', hint: 'Mid sem and end sem timetables for each class.' },
+          { tab: 'quizzes', label: 'Quizzes', hint: 'Quiz date, time, rooms and syllabus.' },
+          { tab: 'examNotices', label: 'Notices', hint: 'Supplementary, make-up and room or timing changes.' },
+        ],
+      },
+      {
+        tab: 'marks',
+        label: 'Marks & grades',
+        hint: 'Upload marks, then give grades',
+        icon: 'award',
+        sub: [
+          { tab: 'marks', label: '1 · Marks', hint: 'Upload quiz, mid sem and end sem marks. Students see them in the app.' },
+          { tab: 'grades', label: '2 · Grades', hint: 'At the end of the semester, turn total marks into letter grades for your subject.' },
+          { tab: 'examResults', label: '3 · Result sheet', hint: 'Exam cell only: upload the official result sheet for a whole class.' },
+        ],
+      },
+      {
+        tab: 'examStatus',
+        label: 'Results & backlogs',
+        hint: 'Backlogs, year back and class CGPA',
+        icon: 'chart',
+        sub: [
+          { tab: 'examStatus', label: 'Backlogs & status', hint: 'Who has backlogs, year back risk and credits.' },
+          { tab: 'cgpa', label: 'Class CGPA', hint: 'SGPA and CGPA for a whole class.' },
+        ],
+      },
     ],
     prefetch: () => {
       import('./ExamSchedule');
       import('./AssignGrades');
+      import('./UploadMarks');
       import('./ClassCGPA');
       import('./ExamCell');
     },
@@ -113,7 +162,7 @@ export const NAV: NavGroup[] = [
     icon: 'medical',
     items: [
       { tab: 'sos', label: 'SOS alerts', hint: 'Live student emergencies', icon: 'alert' },
-      { tab: 'medicalLeaves', label: 'Medical leaves', hint: 'Doctor → DR → Dean → HOD', icon: 'medical' },
+      { tab: 'medicalLeaves', label: 'Medical leaves', hint: 'Office → MO → HOD, Dean, JR', icon: 'medical' },
       { tab: 'complaints', label: 'Complaints & doubts', hint: 'From students', icon: 'chat' },
       { tab: 'reports', label: 'Reported posts', hint: 'Lost & Found flags', icon: 'alert' },
     ],
@@ -149,7 +198,7 @@ export const NAV: NavGroup[] = [
     icon: 'book',
     items: [
       { tab: 'curriculum', label: 'Curriculum', hint: 'Subjects per semester', icon: 'book' },
-      { tab: 'messSubscribers', label: 'Thali subscribers', hint: 'Mess list', icon: 'thali' },
+      { tab: 'messSubscribers', label: 'Mess', hint: 'Prices & thali subscribers', icon: 'thali' },
       { tab: 'inboxImports', label: 'Inbox imports', hint: 'From email', icon: 'inbox' },
     ],
     prefetch: () => {
@@ -161,10 +210,16 @@ export const NAV: NavGroup[] = [
   },
 ];
 
-export function findTab(tab: Tab): { group: NavGroup; item: NavItem } | null {
+export function findTab(tab: Tab): { group: NavGroup; item: NavItem; sub: SubTab | null } | null {
   for (const group of NAV) {
-    const item = group.items.find((i) => i.tab === tab);
-    if (item) return { group, item };
+    for (const item of group.items) {
+      const s = item.sub?.find((x) => x.tab === tab) ?? null;
+      if (item.tab === tab || s) return { group, item, sub: s };
+    }
   }
   return null;
 }
+
+export const ALL_NAV_TABS: Tab[] = NAV.flatMap((g) => g.items.flatMap((i) => [i.tab, ...(i.sub ?? []).map((s) => s.tab)]));
+
+export const navFor = (isLeader: boolean): NavGroup[] => NAV.filter((g) => !g.leaderOnly || isLeader);

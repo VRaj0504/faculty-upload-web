@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { doc, serverTimestamp, updateDoc } from 'firebase/firestore';
+import { doc, getDoc, serverTimestamp, updateDoc } from 'firebase/firestore';
 import { auth, db } from './firebaseConfig';
 import { Icon } from './icons';
 import type { SosAlert } from './useActiveSos';
@@ -11,8 +11,23 @@ function ago(ms: number) {
   return m < 1 ? 'just now' : m < 60 ? `${m} min ago` : `${Math.round(m / 60)} hr ago`;
 }
 
-export default function SosBoard({ alerts, me }: { alerts: SosAlert[] | null; me: { name: string; email: string } }) {
+export default function SosBoard({
+  alerts,
+  me,
+  viewOnly = false,
+}: {
+  alerts: SosAlert[] | null;
+  me: { name: string; email: string };
+  viewOnly?: boolean;
+}) {
   const [, tick] = useState(0);
+  const [responder, setResponder] = useState(!viewOnly);
+  useEffect(() => {
+    if (!viewOnly) return;
+    getDoc(doc(db, 'config', 'sos'))
+      .then((s) => setResponder(((s.data()?.responderEmails ?? []) as string[]).map((e) => String(e).toLowerCase()).includes(me.email.toLowerCase())))
+      .catch(() => setResponder(false));
+  }, [viewOnly, me.email]);
   const [busy, setBusy] = useState<string | null>(null);
   useEffect(() => {
     const id = setInterval(() => tick((n) => n + 1), 30000);
@@ -106,19 +121,22 @@ export default function SosBoard({ alerts, me }: { alerts: SosAlert[] | null; me
                 )}
 
                 <div className="sos-actions">
+                  {!responder && <p className="sos-loc" style={{ flex: 1 }}>View only. The doctor and wardens respond to alerts.</p>}
                   {a.phone && (
                     <a className="button-secondary sos-call" href={`tel:${a.phone}`}>
                       Call {a.phone}
                     </a>
                   )}
-                  {open && (
+                  {responder && open && (
                     <button type="button" className="sos-go" disabled={busy === a.id} onClick={() => act(a, 'acknowledged')}>
                       I'm on my way
                     </button>
                   )}
-                  <button type="button" className="sos-done" disabled={busy === a.id} onClick={() => act(a, 'resolved')}>
-                    Resolved
-                  </button>
+                  {responder && (
+                    <button type="button" className="sos-done" disabled={busy === a.id} onClick={() => act(a, 'resolved')}>
+                      Resolved
+                    </button>
+                  )}
                 </div>
               </article>
             );

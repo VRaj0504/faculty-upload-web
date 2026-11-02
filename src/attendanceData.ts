@@ -1,3 +1,4 @@
+import { getDocsCached } from './cachedCollection';
 
 
 import {
@@ -25,7 +26,7 @@ import {
 const SESSIONS = 'attendanceSessions';
 
 export async function loadRoster(): Promise<RosterEntry[]> {
-  const snap = await getDocs(collection(db, 'roster'));
+  const snap = await getDocsCached('roster');
   return snap.docs
 
     .filter((d) => d.data().reviewer !== true)
@@ -59,9 +60,10 @@ export async function loadSubjects(branches: string[], semester: number): Promis
   const out = new Map<string, SubjectOption>();
   for (const branch of branches) {
     try {
-      const snap = await getDocs(
-        query(collection(db, 'curriculum'), where('branch', '==', branch), where('semester', '==', semester)),
-      );
+      const snap = await Promise.race([
+        getDocs(query(collection(db, 'curriculum'), where('branch', '==', branch), where('semester', '==', semester))),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), 4000)),
+      ]);
       snap.docs.forEach((d) => {
         const x = d.data() as { code?: string; name?: string };
         if (x.code && !out.has(normCode(x.code))) out.set(normCode(x.code), { code: x.code, name: x.name ?? x.code });
@@ -159,19 +161,51 @@ export async function deleteSessions(ids: string[]) {
   await Promise.all(ids.map((id) => deleteDoc(doc(db, SESSIONS, id))));
 }
 
+function chunk<T>(xs: T[], n: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < xs.length; i += n) out.push(xs.slice(i, i + n));
+  return out;
+}
+
 export async function loadApprovedExcusals(regNos: Set<string>): Promise<{ map: Map<string, ExcusalRange[]>; ok: boolean }> {
   const map = new Map<string, ExcusalRange[]>();
+  const add = (r: string, range: ExcusalRange) => map.set(r, [...(map.get(r) ?? []), range]);
+  let ok = true;
   try {
-    const snap = await getDocs(query(collection(db, 'eventExcusals'), where('status', '==', 'approved')));
-    snap.docs.forEach((d) => {
+    const regs = Array.from(regNos);
+    const parts = await Promise.all(
+      chunk(regs, 30).map((c) =>
+        getDocs(query(collection(db, 'eventExcusals'), where('status', '==', 'approved'), where('studentEnrollmentNumbers', 'array-contains-any', c))),
+      ),
+    );
+    const seen = new Set<string>();
+    parts.flatMap((p) => p.docs).filter((d) => !seen.has(d.id) && seen.add(d.id)).forEach((d) => {
       const x = d.data() as { studentEnrollmentNumbers?: string[]; fromDate: string; toDate: string; eventName?: string };
       for (const r of x.studentEnrollmentNumbers ?? []) {
         if (!regNos.has(r)) continue;
-        map.set(r, [...(map.get(r) ?? []), { fromDate: x.fromDate, toDate: x.toDate, eventName: x.eventName }]);
+        add(r, { fromDate: x.fromDate, toDate: x.toDate, eventName: x.eventName });
       }
     });
-    return { map, ok: true };
   } catch {
-    return { map, ok: false };
+    ok = false;
   }
+  try {
+    const regs = Array.from(regNos);
+    const parts = await Promise.all(
+      chunk(regs, 30).map((c) => getDocs(query(collection(db, 'medicalExcusals'), where('enrollmentNumber', 'in', c)))),
+    );
+    parts.flatMap((p) => p.docs).forEach((d) => {
+      const x = d.data() as { enrollmentNumber?: string | null; fromDate?: string; toDate?: string; sessions?: string[]; allDates?: boolean };
+      if (!x.enrollmentNumber || !regNos.has(x.enrollmentNumber) || !x.fromDate || !x.toDate) return;
+      add(x.enrollmentNumber, {
+        fromDate: x.fromDate,
+        toDate: x.toDate,
+        eventName: 'Medical leave',
+        ...(x.allDates ? {} : { sessions: x.sessions ?? [] }),
+      });
+    });
+  } catch {
+    ok = false;
+  }
+  return { map, ok };
 }

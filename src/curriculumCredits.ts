@@ -70,3 +70,10 @@ export const COURSE_CREDITS: Record<string, number> = {
   MS701: 3,
   MS702: 4,
 };
+
+export const SPLIT_COURSES: Record<string, { theory: number; practical: number }> = {
+  CS101: { theory: 3, practical: 1 },
+  AS101: { theory: 3, practical: 1 },
+  CS201: { theory: 3, practical: 1 },
+  EC201: { theory: 3, practical: 1 },
+};

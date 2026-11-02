@@ -71,7 +71,7 @@
       "redirects": [
         {
           "source": "/:path*",
-          "destination": "https://collegego-iiitsurat.web.app/:path*",
+          "destination": "https://collegego-faculty.web.app/:path*",
           "type": 301
         }
       ]

@@ -1,7 +1,7 @@
 import { useEffect, useRef, type CSSProperties } from 'react';
 import { auth } from './firebaseConfig';
 import { Icon } from './icons';
-import { NAV, toneVars, type Tab } from './nav';
+import { findTab, navFor, toneVars, type Tab } from './nav';
 
 export type Profile = { name: string; email: string };
 
@@ -20,6 +20,7 @@ export default function Sidebar({
   profile,
   medicalWaiting,
   sosCount = null,
+  isLeader = false,
   open,
   onClose,
 }: {
@@ -28,6 +29,7 @@ export default function Sidebar({
   profile: Profile;
   medicalWaiting: number | null;
   sosCount?: number | null;
+  isLeader?: boolean;
   open: boolean;
   onClose: () => void;
 }) {
@@ -42,7 +44,7 @@ export default function Sidebar({
   }, [open, onClose]);
 
   const item = (tab: Tab, label: string, icon: Parameters<typeof Icon>[0]['name'], tone: CSSProperties, badge?: number | null) => {
-    const isActive = active === tab;
+    const isActive = active === tab || findTab(active)?.item.tab === tab;
     return (
       <button
         key={tab}
@@ -72,7 +74,7 @@ export default function Sidebar({
 
       <nav className="sidebar-nav" ref={navRef}>
         {item('home', 'Home', 'home', { background: 'var(--surface-alt)', color: 'var(--ink)' })}
-        {NAV.map((group) => (
+        {navFor(isLeader).map((group) => (
           <div className="nav-group" key={group.id} onMouseEnter={group.prefetch} onFocus={group.prefetch}>
             <div className="nav-group-label">
               <span className="nav-group-dot" style={{ background: `var(--tone-${group.tone}-fg)` }} />

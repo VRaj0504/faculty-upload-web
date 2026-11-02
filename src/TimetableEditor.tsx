@@ -1,5 +1,6 @@
+import { getDocsCached, clearCached } from './cachedCollection';
 import { useState, useEffect, type ReactElement } from 'react';
-import { doc, getDoc, setDoc, serverTimestamp, collection, getDocs } from 'firebase/firestore';
+import { doc, getDoc, setDoc, deleteDoc, serverTimestamp, collection, getDocs } from 'firebase/firestore';
 import { ref, uploadBytes } from 'firebase/storage';
 import { httpsCallable } from 'firebase/functions';
 import { db, storage, functions, auth } from './firebaseConfig';
@@ -573,7 +574,7 @@ function TimetableEditor() {
 
   const [rosterSections, setRosterSections] = useState<{ branch: string; section: string }[]>([]);
   useEffect(() => {
-    getDocs(collection(db, 'roster')).then((snap) => {
+    getDocsCached('roster').then((snap) => {
       const seen = new Set<string>();
       const list: { branch: string; section: string }[] = [];
       snap.docs.forEach((d) => {
@@ -592,7 +593,7 @@ function TimetableEditor() {
   const [curriculumLookup, setCurriculumLookup] = useState<Map<string, string>>(new Map());
   const [curriculumLoading, setCurriculumLoading] = useState(true);
   useEffect(() => {
-    getDocs(collection(db, 'curriculum')).then((snap) => {
+    getDocsCached('curriculum').then((snap) => {
       const map = new Map<string, string>();
       snap.docs.forEach((d) => {
         const data = d.data() as { branch?: string; code?: string; name?: string };
@@ -608,6 +609,10 @@ function TimetableEditor() {
   const [branch, setBranch] = useState('');
   const [semester, setSemester] = useState('');
   const [section, setSection] = useState('');
+  const [newSectionMode, setNewSectionMode] = useState(false);
+  const [pendingLoad, setPendingLoad] = useState(false);
+  const [knownSections, setKnownSections] = useState<{ id: string; branch: string; semester: number; section: string; empty: boolean }[]>([]);
+  const [cleaning, setCleaning] = useState(false);
   const [days, setDays] = useState<TimetableDay[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -830,6 +835,7 @@ function TimetableEditor() {
             .filter((s) => s.startTime && s.subjectCode)
             .sort((a, b) => a.startTime.localeCompare(b.startTime)),
         }));
+        clearCached('timetable');
         await setDoc(doc(db, 'timetable', id), {
           branch: group.branch,
           semester: group.semester,
@@ -963,6 +969,41 @@ function TimetableEditor() {
     }
   };
 
+  useEffect(() => {
+    getDocs(collection(db, 'timetable'))
+      .then((snap) => {
+        const list = snap.docs
+          .map((d) => ({ id: d.id, ...(d.data() as { branch?: string; semester?: number; section?: string; days?: { slots?: unknown[] }[] }) }))
+          .filter((d) => d.branch && d.semester && d.section)
+          .map((d) => ({
+            id: d.id,
+            branch: String(d.branch).toUpperCase(),
+            semester: Number(d.semester),
+            section: String(d.section),
+            empty: !(d.days ?? []).some((day) => (day.slots ?? []).length > 0),
+          }))
+          .sort((a, b) => a.branch.localeCompare(b.branch) || a.semester - b.semester || a.section.localeCompare(b.section, undefined, { numeric: true }));
+        setKnownSections(list);
+      })
+      .catch(() => setKnownSections([]));
+  }, [existed]);
+
+  useEffect(() => {
+    if (!pendingLoad) return;
+    setPendingLoad(false);
+    handleLoad();
+  }, [pendingLoad]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const branchOptions = Array.from(new Set(['CSE', 'ECE', 'MNC', ...knownSections.map((k) => k.branch), ...(branch.trim() ? [branch.trim().toUpperCase()] : [])]));
+  const semesterOptions = Array.from(new Set([1, 2, 3, 4, 5, 6, 7, 8, ...(Number(semester) > 0 ? [Number(semester)] : [])])).sort((a, b) => a - b);
+  const sectionOptions = Array.from(
+    new Set([
+      ...knownSections.filter((k) => k.branch === branch.trim().toUpperCase() && String(k.semester) === semester.trim()).map((k) => k.section),
+      ...knownSections.filter((k) => k.branch === branch.trim().toUpperCase()).map((k) => k.section),
+      ...(section.trim() ? [section.trim()] : []),
+    ]),
+  );
+
   const handleSave = async () => {
     if (!days) return;
     if (!branch.trim() || !semester.trim() || !section.trim()) {
@@ -988,6 +1029,7 @@ function TimetableEditor() {
           .sort((a, b) => a.startTime.localeCompare(b.startTime)),
       }));
       const roomAliases = await loadRoomAliases();
+      clearCached('timetable');
       await setDoc(doc(db, 'timetable', id), {
         branch: branch.trim().toUpperCase(),
         semester: Number(semester),
@@ -1185,18 +1227,138 @@ function TimetableEditor() {
         )}
       </div>
 
-      <div style={{ display: 'flex', gap: '1rem', marginTop: '1.5rem' }}>
+      {knownSections.length > 0 && (
+        <div style={{ marginTop: '1.5rem' }}>
+          <label>Open a saved timetable</label>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginTop: '0.4rem' }}>
+            {knownSections.map((k) => {
+              const active = k.branch === branch.trim().toUpperCase() && String(k.semester) === semester.trim() && k.section === section.trim();
+              return (
+                <button
+                  key={`${k.branch}-${k.semester}-${k.section}`}
+                  type="button"
+                  className={active ? '' : 'button-secondary'}
+                  style={{ padding: '0.35rem 0.75rem', fontSize: '0.85rem', opacity: k.empty && !active ? 0.6 : 1 }}
+                  onClick={() => {
+                    setBranch(k.branch);
+                    setSemester(String(k.semester));
+                    setSection(k.section);
+                    setNewSectionMode(false);
+                    setPendingLoad(true);
+                  }}
+                >
+                  {k.branch} · Sem {k.semester} · {k.section}
+                  {k.empty ? ' · empty' : ''}
+                </button>
+              );
+            })}
+          </div>
+          {knownSections.some((k) => k.empty) && (
+            <p style={{ fontSize: '0.85rem', marginTop: '0.6rem' }}>
+              {knownSections.filter((k) => k.empty).length} saved timetable
+              {knownSections.filter((k) => k.empty).length === 1 ? ' has' : 's have'} no classes in them.{' '}
+              <button
+                type="button"
+                className="button-secondary"
+                disabled={cleaning}
+                style={{ padding: '0.25rem 0.6rem', fontSize: '0.8rem' }}
+                onClick={async () => {
+                  const empties = knownSections.filter((k) => k.empty);
+                  const names = empties.map((k) => `${k.branch} Sem ${k.semester} ${k.section}`).join('\n');
+                  if (!confirm(`Delete these empty timetables?\n\n${names}\n\nThey have no classes, so students see nothing from them. This can't be undone.`)) return;
+                  setCleaning(true);
+                  try {
+                    await Promise.all(empties.map((k) => deleteDoc(doc(db, 'timetable', k.id))));
+                    clearCached('timetable');
+                    setKnownSections((list) => list.filter((k) => !k.empty));
+                    setStatus(`Deleted ${empties.length} empty timetable${empties.length === 1 ? '' : 's'}.`);
+                  } catch (err: any) {
+                    setStatus(`Couldn't delete: ${err.message}`);
+                  } finally {
+                    setCleaning(false);
+                  }
+                }}
+              >
+                {cleaning ? 'Deleting…' : 'Delete empty ones'}
+              </button>
+            </p>
+          )}
+        </div>
+      )}
+
+      <div style={{ display: 'flex', gap: '1rem', marginTop: '1.25rem' }}>
         <div style={{ flex: 1 }}>
           <label>Branch</label>
-          <input type="text" value={branch} onChange={(e) => setBranch(e.target.value)} placeholder="e.g. CSE" />
+          <select
+            value={branch.trim().toUpperCase()}
+            onChange={(e) => {
+              setBranch(e.target.value);
+              setSection('');
+              setNewSectionMode(false);
+            }}
+          >
+            <option value="">Select…</option>
+            {branchOptions.map((b) => (
+              <option key={b} value={b}>
+                {b}
+              </option>
+            ))}
+          </select>
         </div>
         <div style={{ flex: 1 }}>
           <label>Semester</label>
-          <input type="number" value={semester} onChange={(e) => setSemester(e.target.value)} placeholder="e.g. 3" />
+          <select
+            value={semester.trim()}
+            onChange={(e) => {
+              setSemester(e.target.value);
+              setSection('');
+              setNewSectionMode(false);
+            }}
+          >
+            <option value="">Select…</option>
+            {semesterOptions.map((n) => (
+              <option key={n} value={n}>
+                Sem {n}
+              </option>
+            ))}
+          </select>
         </div>
         <div style={{ flex: 1 }}>
           <label>Section</label>
-          <input type="text" value={section} onChange={(e) => setSection(e.target.value)} placeholder="e.g. CSE A" />
+          {newSectionMode ? (
+            <div style={{ display: 'flex', gap: '0.5rem' }}>
+              <input type="text" value={section} onChange={(e) => setSection(e.target.value)} placeholder="New section name" autoFocus />
+              <button
+                type="button"
+                className="button-secondary"
+                onClick={() => {
+                  setNewSectionMode(false);
+                  setSection('');
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          ) : (
+            <select
+              value={section.trim()}
+              disabled={!branch.trim() || !semester.trim()}
+              onChange={(e) => {
+                if (e.target.value === '__new') {
+                  setNewSectionMode(true);
+                  setSection('');
+                } else setSection(e.target.value);
+              }}
+            >
+              <option value="">{branch.trim() && semester.trim() ? 'Select…' : 'Pick branch and semester'}</option>
+              {sectionOptions.map((x) => (
+                <option key={x} value={x}>
+                  {x}
+                </option>
+              ))}
+              <option value="__new">+ New section…</option>
+            </select>
+          )}
         </div>
       </div>
 

@@ -1,5 +1,7 @@
 import { useState } from 'react';
 import type { ExamEntry } from './examSheetParser';
+import VenueSelect from './VenueSelect';
+import { SLOTS, slotOf } from './examVenues';
 
 const cellInput: React.CSSProperties = { width: '100%', boxSizing: 'border-box', padding: '0.35rem 0.4rem', fontSize: '0.85rem' };
 
@@ -35,15 +37,16 @@ function ExamEntriesTable({
   return (
     <>
       <div style={{ overflowX: 'auto', marginTop: '0.75rem' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 760 }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 980 }}>
           <thead>
             <tr style={{ textAlign: 'left', fontSize: '0.75rem' }}>
               <th style={{ width: 140 }}>Date</th>
+              <th style={{ width: 150 }}>Slot</th>
               <th style={{ width: 100 }}>Start</th>
               <th style={{ width: 100 }}>End</th>
               <th style={{ width: 130 }}>Code</th>
               <th>Subject</th>
-              <th style={{ width: 130 }}>Venue</th>
+              <th style={{ width: 150 }}>Venue</th>
               <th style={{ width: 36 }} />
             </tr>
           </thead>
@@ -51,6 +54,20 @@ function ExamEntriesTable({
             {entries.map((e, i) => (
               <tr key={i} style={problemRows.includes(i + 1) ? { background: '#fef3c7' } : undefined}>
                 <td><input type="date" style={cellInput} value={e.date} onChange={(ev) => update(i, { date: ev.target.value })} /></td>
+                <td>
+                  <select
+                    style={cellInput}
+                    value={slotOf(e.startTime, e.endTime)}
+                    onChange={(ev) => {
+                      const sl = SLOTS.find((x) => x.id === ev.target.value);
+                      if (sl) update(i, { startTime: sl.start, endTime: sl.end });
+                    }}
+                  >
+                    <option value="">Pick…</option>
+                    {SLOTS.map((x) => <option key={x.id} value={x.id}>{x.label}</option>)}
+                    <option value="custom" disabled>Custom time</option>
+                  </select>
+                </td>
                 <td><input type="time" style={cellInput} value={e.startTime} onChange={(ev) => update(i, { startTime: ev.target.value })} /></td>
                 <td><input type="time" style={cellInput} value={e.endTime} onChange={(ev) => update(i, { endTime: ev.target.value })} /></td>
                 <td>
@@ -90,8 +107,29 @@ function ExamEntriesTable({
                     <input style={cellInput} value={e.subjectCode} onChange={(ev) => update(i, { subjectCode: ev.target.value })} />
                   )}
                 </td>
-                <td><input style={cellInput} value={e.subjectName} onChange={(ev) => update(i, { subjectName: ev.target.value })} /></td>
-                <td><input style={cellInput} value={e.venue} onChange={(ev) => update(i, { venue: ev.target.value })} /></td>
+                <td>
+                  {subjects && subjects.length > 0 && !customRows.has(i) && (!e.subjectCode || subjects.some((o) => o.code === e.subjectCode.trim())) ? (
+                    <select
+                      style={cellInput}
+                      value={e.subjectCode.trim()}
+                      onChange={(ev) => {
+                        if (ev.target.value === '__other__') {
+                          setCustomRows((prev) => new Set(prev).add(i));
+                          return;
+                        }
+                        const chosen = subjects.find((o) => o.code === ev.target.value);
+                        update(i, chosen ? { subjectCode: chosen.code, subjectName: chosen.name } : { subjectCode: '', subjectName: '' });
+                      }}
+                    >
+                      <option value="">Pick a subject…</option>
+                      {subjects.map((o) => <option key={o.code} value={o.code}>{o.name}</option>)}
+                      <option value="__other__">Other…</option>
+                    </select>
+                  ) : (
+                    <input style={cellInput} placeholder="Subject name" value={e.subjectName} onChange={(ev) => update(i, { subjectName: ev.target.value })} />
+                  )}
+                </td>
+                <td><VenueSelect style={cellInput} value={e.venue} onChange={(v) => update(i, { venue: v })} /></td>
                 <td>
                   <button
                     type="button"

@@ -1,6 +1,7 @@
+import { getDocsCached } from './cachedCollection';
 import BrandLoader from './BrandLoader';
 import { useState, useEffect, useMemo } from 'react';
-import { collection, getDocs, doc, writeBatch, serverTimestamp, query, where, Timestamp } from 'firebase/firestore';
+import { collection, getDocs, getDoc, doc, writeBatch, serverTimestamp, query, where, Timestamp } from 'firebase/firestore';
 import { db, auth } from './firebaseConfig';
 import { gradesTemplate } from './xlsxTemplates';
 import { curriculum as staticCurriculum } from './curriculum';
@@ -86,7 +87,7 @@ function AssignGrades() {
   const [overrides, setOverrides] = useState<Record<string, string>>({});
 
   useEffect(() => {
-    Promise.all([getDocs(collection(db, 'roster')), getDocs(collection(db, 'curriculum'))])
+    Promise.all([getDocsCached('roster'), getDocsCached('curriculum')])
       .then(([rosterSnap, curriculumSnap]) => {
         setRoster(
           rosterSnap.docs
@@ -394,9 +395,13 @@ function AssignGrades() {
       const enteredBy = auth.currentUser?.uid ?? 'web-portal';
       const enteredByName = auth.currentUser?.email ?? 'Web Portal';
       const sectionValue = section === '(no section)' ? null : section;
-      const existingSnap = await getDocs(
-        query(collection(db, 'grades'), where('subjectCode', '==', subjectCode.trim()), where('admissionYear', '==', Number(admissionYear))),
-      );
+      const [existingSnap, examCfg] = await Promise.all([
+        getDocs(
+          query(collection(db, 'grades'), where('subjectCode', '==', subjectCode.trim()), where('admissionYear', '==', Number(admissionYear))),
+        ),
+        getDoc(doc(db, 'config', 'exams')).catch(() => null),
+      ]);
+      const published = (examCfg?.data() as { publishMode?: string } | undefined)?.publishMode !== 'examCell';
       const existingById = new Map(existingSnap.docs.map((d) => [d.id, d.data() as Record<string, any>]));
 
       const CHUNK = 400;
@@ -429,13 +434,18 @@ function AssignGrades() {
             history,
             enteredBy,
             enteredByName,
+            published,
             createdAt: prev?.createdAt ?? serverTimestamp(),
             updatedAt: serverTimestamp(),
           });
         }
         await batch.commit();
       }
-      setStatus(`Saved grades for ${marks.length} students.`);
+      setStatus(
+        published
+          ? `Saved grades for ${marks.length} students. They can see them now.`
+          : `Saved grades for ${marks.length} students. They stay hidden until the exam cell publishes them.`,
+      );
     } catch (err: any) {
       setStatus(`Save failed: ${err.message}`);
     } finally {

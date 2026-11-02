@@ -10,6 +10,7 @@ import {
   type RosterEntry,
 } from './attendanceCore';
 import { loadHolidayOverrides, loadRoster, loadSubjects, type SubjectOption } from './attendanceData';
+import { loadMyClassSlots, todaysClasses, slotMinutes, formatClock, type MyClassSlot } from './teachingSlots';
 
 export type AttendanceSelection = {
   batchKey: string;
@@ -44,14 +45,28 @@ export type PickerState = {
   students: RosterEntry[];
 };
 
+const normSection = (branch: string, section: string | null | undefined) => {
+  const b = String(branch ?? '').toUpperCase().replace(/[\s_-]+/g, '');
+  let x = String(section ?? '').toUpperCase().replace(/[\s_-]+/g, '').replace(/^(SECTION|SEC)/, '');
+  if (b && x.startsWith(b)) x = x.slice(b.length);
+  return x;
+};
+
+let autoPickedOnce = false;
+
 export default function AttendanceClassPicker({
   subjectMode,
   onChange,
+  quickPick = false,
 }: {
 
   subjectMode: 'required' | 'optional';
   onChange: (s: PickerState | null) => void;
+  quickPick?: boolean;
 }) {
+  const [myToday, setMyToday] = useState<MyClassSlot[]>([]);
+  const [pendingCode, setPendingCode] = useState<{ code: string; name: string } | null>(null);
+  const [pickNote, setPickNote] = useState('');
   const [data, setData] = useState<{ roster: RosterEntry[]; holidays: Map<string, string> } | null>(null);
   const [loadError, setLoadError] = useState('');
   const [sel, setSel] = useState<AttendanceSelection>(remembered);
@@ -64,7 +79,55 @@ export default function AttendanceClassPicker({
       .catch((e) => setLoadError(`Couldn’t load the roster: ${e?.message ?? 'unknown error'}. Reload the page to try again.`));
   }, []);
 
+  useEffect(() => {
+    if (!quickPick) return;
+    let live = true;
+    loadMyClassSlots('')
+      .then((all) => live && setMyToday(todaysClasses(all)))
+      .catch(() => live && setMyToday([]));
+    return () => {
+      live = false;
+    };
+  }, [quickPick]);
+
   const batches = useMemo(() => (data ? deriveBatches(data.roster) : []), [data]);
+
+  const applySlot = (slot: MyClassSlot) => {
+    if (!data) return;
+    const b =
+      batches.find((x) => !x.pg && currentSemester(x.year, x.pg) === slot.semester) ??
+      batches.find((x) => currentSemester(x.year, x.pg) === slot.semester) ??
+      null;
+    if (!b) {
+      setPickNote(`No ${slot.branch} batch is in semester ${slot.semester} on the roster — pick the class below.`);
+      return;
+    }
+    const want = normSection(slot.branch, slot.section);
+    const c =
+      deriveClasses(data.roster, b).find((x) => x.targets.some((t) => t.branch === slot.branch) && normSection(slot.branch, x.section) === want) ??
+      deriveClasses(data.roster, b).find((x) => !x.section && x.targets.some((t) => t.branch === slot.branch)) ??
+      null;
+    if (!c) {
+      setPickNote(`Couldn't find ${slot.branch} ${slot.section} on the roster — pick the class below.`);
+      setSel({ ...EMPTY, batchKey: b.key, semester: slot.semester });
+      return;
+    }
+    setPickNote('');
+    setTyping(false);
+    setSel({ batchKey: b.key, classKey: c.key, semester: slot.semester, subject: null, specialization: '' });
+    setPendingCode({ code: slot.subjectCode, name: slot.subjectName });
+  };
+
+  useEffect(() => {
+    if (!quickPick || autoPickedOnce || !data || !myToday.length || sel.batchKey) return;
+    const now = new Date();
+    const m = now.getHours() * 60 + now.getMinutes();
+    const live = myToday.find((x) => slotMinutes(x.startTime) <= m && m < slotMinutes(x.endTime) + 60);
+    if (!live) return;
+    autoPickedOnce = true;
+    applySlot(live);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [quickPick, data, myToday, sel.batchKey]);
   const batch = batches.find((b) => b.key === sel.batchKey) ?? null;
   const classes = useMemo(() => (data && batch ? deriveClasses(data.roster, batch) : []), [data, batch]);
   const cls = classes.find((c) => c.key === sel.classKey) ?? null;
@@ -84,7 +147,9 @@ export default function AttendanceClassPicker({
     setSubjects(null);
     if (!cls || !sel.semester) return;
     let live = true;
-    loadSubjects(branchesKey.split(','), sel.semester).then((s) => live && setSubjects(s));
+    loadSubjects(branchesKey.split(','), sel.semester)
+      .then((s) => live && setSubjects(s))
+      .catch(() => live && setSubjects([]));
     return () => {
       live = false;
     };
@@ -93,6 +158,15 @@ export default function AttendanceClassPicker({
   useEffect(() => {
     if (subjects && sel.subject && !subjects.some((s) => s.code === sel.subject!.code)) setTyping(true);
   }, [subjects, sel.subject]);
+
+  useEffect(() => {
+    if (!pendingCode || !subjects) return;
+    const k = (x: string) => x.replace(/\s+/g, '').toUpperCase();
+    const found = subjects.find((x) => k(x.code) === k(pendingCode.code));
+    setSel((s) => ({ ...s, subject: found ?? { code: k(pendingCode.code), name: pendingCode.name } }));
+    if (!found) setTyping(true);
+    setPendingCode(null);
+  }, [subjects, pendingCode]);
 
   const students = useMemo(() => {
     if (!cls) return [];
@@ -123,8 +197,51 @@ export default function AttendanceClassPicker({
   if (!data) return <p className="res-hint">Loading classes…</p>;
   if (!batches.length) return <p className="notice notice-error">The roster is empty — upload it under Students first.</p>;
 
+  const nowM = new Date().getHours() * 60 + new Date().getMinutes();
+  const isPicked = (x: MyClassSlot) =>
+    !!batch &&
+    !!cls &&
+    sel.semester === x.semester &&
+    cls.targets.some((t) => t.branch === x.branch) &&
+    normSection(x.branch, cls.section) === normSection(x.branch, x.section) &&
+    (sel.subject?.code ?? '').toUpperCase() === x.subjectCode.replace(/\s+/g, '').toUpperCase();
+
   return (
     <div className="att-picker">
+      {quickPick && myToday.length > 0 && (
+        <div className="att-quick">
+          <div className="att-quick-head">
+            <strong>Your classes today</strong>
+            <span>Click one to fill everything in</span>
+          </div>
+          <div className="att-quick-list">
+            {myToday.map((x, i) => {
+              const a = slotMinutes(x.startTime);
+              const b = slotMinutes(x.endTime);
+              const live = a <= nowM && nowM < b;
+              const later = a > nowM;
+              return (
+                <button
+                  key={`${x.startTime}-${x.subjectCode}-${x.section}-${i}`}
+                  type="button"
+                  className={`att-quick-item${isPicked(x) ? ' is-picked' : ''}${later ? ' is-later' : ''}`}
+                  onClick={() => applySlot(x)}
+                >
+                  <span className="att-quick-time">{formatClock(x.startTime)}</span>
+                  <span className="att-quick-main">
+                    <span className="att-quick-subject">{x.subjectName || x.subjectCode}</span>
+                    <span className="att-quick-meta">
+                      {[x.branch, `Sem ${x.semester}`, normSection(x.branch, x.section) ? x.section : null, x.room].filter(Boolean).join(' · ')}
+                    </span>
+                  </span>
+                  <span className={`att-quick-tag${live ? ' is-live' : ''}`}>{live ? 'Now' : later ? 'Later' : 'Done'}</span>
+                </button>
+              );
+            })}
+          </div>
+          {pickNote && <p className="res-hint" style={{ marginTop: '0.5rem' }}>{pickNote}</p>}
+        </div>
+      )}
       <div className="att-row">
         <div className="att-field">
           <label>Batch</label>

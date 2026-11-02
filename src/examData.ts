@@ -1,7 +1,8 @@
+import { getDocsCached } from './cachedCollection';
 import { collection, doc, getDoc, getDocs, query, serverTimestamp, Timestamp, where, writeBatch } from 'firebase/firestore';
 import { auth, db } from './firebaseConfig';
 import { curriculum as staticCurriculum } from './curriculum';
-import { COURSE_CREDITS } from './curriculumCredits';
+import { COURSE_CREDITS, SPLIT_COURSES } from './curriculumCredits';
 import type { AttemptType, ResultInput } from './examRules';
 
 export type RosterRow = {
@@ -41,7 +42,7 @@ export const subjectKey = (branch: string, code: string) => `${branch.toUpperCas
 export const gradeDocId = (regNo: string, code: string) => `${regNo}_${code}`;
 
 export async function loadRoster(): Promise<RosterRow[]> {
-  const snap = await getDocs(collection(db, 'roster'));
+  const snap = await getDocsCached('roster');
   return snap.docs
     .filter((d) => d.data().reviewer !== true)
     .map((d) => {
@@ -68,11 +69,26 @@ export async function loadSubjectIndex(): Promise<Map<string, SubjectInfo>> {
           semester: Number(sem),
           credits: COURSE_CREDITS[s.code] ?? null,
         });
+        const split = SPLIT_COURSES[s.code];
+        if (split) {
+          for (const [suffix, label, credits] of [
+            ['T', 'Theory', split.theory],
+            ['P', 'Practical', split.practical],
+          ] as const) {
+            index.set(subjectKey(branch, s.code + suffix), {
+              branch,
+              code: s.code + suffix,
+              name: `${s.name} (${label})`,
+              semester: Number(sem),
+              credits,
+            });
+          }
+        }
       }
     }
   }
   try {
-    const snap = await getDocs(collection(db, 'curriculum'));
+    const snap = await getDocsCached('curriculum');
     snap.forEach((d) => {
       const c = d.data() as { branch?: string; semester?: number; code?: string; name?: string; credits?: number };
       if (!c.branch || !c.code || !c.semester) return;
@@ -147,6 +163,7 @@ export function composeGradeDoc(
     history,
     enteredBy: uid,
     enteredByName: name,
+    published: true,
     createdAt: existing?.createdAt ?? serverTimestamp(),
     updatedAt: serverTimestamp(),
   };

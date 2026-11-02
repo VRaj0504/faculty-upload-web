@@ -1,18 +1,21 @@
+import { warmCaches } from './cachedCollection';
 import BrandLoader from './BrandLoader';
 import HelpButton from './HelpButton';
 import { useState, useEffect, useCallback, Suspense } from 'react';
 import { lazyRetry } from './lazyRetry';
-import { onAuthStateChanged } from 'firebase/auth';
+import { onAuthStateChanged, signOut } from 'firebase/auth';
 import type { User } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
 import { auth, db } from './firebaseConfig';
 import Header from './Header';
 import Login from './Login';
+import FacultySetup from './FacultySetup';
 import SegmentedControl from './SegmentedControl';
 import Sidebar, { initialsOf, type Profile } from './Sidebar';
 import Home from './Home';
 import { Icon } from './icons';
-import { NAV, findTab, toneVars, type Tab } from './nav';
+import { ALL_NAV_TABS, findTab, toneVars, type Tab } from './nav';
+import { useIsLeader } from './useIsLeader';
 import { useMedicalWaiting } from './useMedicalWaiting';
 import { useActiveSos } from './useActiveSos';
 
@@ -27,10 +30,14 @@ const MyTimetable = lazyRetry(() => import('./MyTimetable'));
 const ExamSchedule = lazyRetry(() => import('./ExamSchedule'));
 const AddHoliday = lazyRetry(() => import('./AddHoliday'));
 const MessSubscribersUpload = lazyRetry(() => import('./MessSubscribersUpload'));
+const MessAlwaysAvailable = lazyRetry(() => import('./MessAlwaysAvailable'));
 const AttendanceUpload = lazyRetry(() => import('./AttendanceUpload'));
 const AssignGrades = lazyRetry(() => import('./AssignGrades'));
+const UploadMarks = lazyRetry(() => import('./UploadMarks'));
 const ClassCGPA = lazyRetry(() => import('./ClassCGPA'));
 const ExamCell = lazyRetry(() => import('./ExamCell'));
+const ExamCellGate = lazyRetry(() => import('./ExamCellGate'));
+const Quizzes = lazyRetry(() => import('./Quizzes'));
 const MarkAttendance = lazyRetry(() => import('./MarkAttendance'));
 const AttendanceExport = lazyRetry(() => import('./AttendanceExport'));
 const AttendanceRegister = lazyRetry(() => import('./AttendanceRegister'));
@@ -41,6 +48,8 @@ const Complaints = lazyRetry(() => import('./Complaints'));
 const Reports = lazyRetry(() => import('./Reports'));
 const MedicalLeaves = lazyRetry(() => import('./MedicalLeaves'));
 const SosBoard = lazyRetry(() => import('./SosBoard'));
+const DirectorDashboard = lazyRetry(() => import('./DirectorDashboard'));
+const Meetings = lazyRetry(() => import('./Meetings'));
 
 function TabLoading() {
   return (
@@ -50,13 +59,14 @@ function TabLoading() {
   );
 }
 
-const ALL_TABS = new Set<Tab>(['home', ...NAV.flatMap((g) => g.items.map((i) => i.tab))]);
+const ALL_TABS = new Set<Tab>(['home', ...ALL_NAV_TABS]);
 const tabFromHash = (): Tab => {
   const h = window.location.hash.replace(/^#\/?/, '') as Tab;
   return ALL_TABS.has(h) ? h : 'home';
 };
 
 const prefetchPrimary = () => {
+  if (auth.currentUser) warmCaches();
   import('./Upload');
   import('./MedicalLeaves');
   import('./MarkAttendance');
@@ -68,6 +78,7 @@ function App() {
   const [role, setRole] = useState<string | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [checkingAuth, setCheckingAuth] = useState(true);
+  const [setup, setSetup] = useState<'verify' | 'create' | null>(null);
   const [activeTab, setActiveTabState] = useState<Tab>(tabFromHash);
   const [menuOpen, setMenuOpen] = useState(false);
   const [rosterMode, setRosterMode] = useState<'upload' | 'browse'>('browse');
@@ -77,6 +88,7 @@ function App() {
   const medicalWaiting = useMedicalWaiting(role === 'faculty' || role === 'admin' ? profile?.email ?? null : null);
 
   const sosAlerts = useActiveSos(role === 'faculty' || role === 'admin');
+  const isLeader = useIsLeader(role, profile?.email ?? null);
   const sosOpen = sosAlerts?.filter((a) => a.status === 'open').length ?? 0;
   useEffect(() => {
     const base = 'CollegeGo × IIIT Surat';
@@ -128,7 +140,24 @@ function App() {
             ? (userDoc.data() as { role?: string; name?: string; email?: string; isAdmin?: boolean })
             : null;
 
+          if (!userDoc.exists()) {
+            const passwordOnly =
+              firebaseUser.providerData.length > 0 && firebaseUser.providerData.every((p) => p.providerId === 'password');
+            setSetup(passwordOnly && !firebaseUser.emailVerified ? 'verify' : 'create');
+          } else {
+            setSetup(null);
+          }
+
           const nextRole = data?.isAdmin === true ? 'admin' : data?.role ?? null;
+          if (nextRole === 'student') {
+            try {
+              sessionStorage.setItem('cg-portal-notice', 'This portal is only for faculty and admin accounts. Students can use the IIIT Surat app.');
+            } catch {
+
+            }
+            await signOut(auth);
+            return;
+          }
           setRole(nextRole);
 
           const email = (data?.email ?? firebaseUser.email ?? '').toLowerCase();
@@ -140,6 +169,7 @@ function App() {
 
           }
         } else {
+          setSetup(null);
           setRole(null);
           setProfile(null);
           try {
@@ -173,6 +203,22 @@ function App() {
     return <Login />;
   }
 
+  if (setup && role !== 'faculty' && role !== 'admin') {
+    return (
+      <FacultySetup
+        key={`${user.uid}-${setup}`}
+        user={user}
+        step={setup}
+        onReady={(name) => {
+          const email = (user.email ?? '').toLowerCase();
+          setProfile({ name, email });
+          setRole('faculty');
+          setSetup(null);
+        }}
+      />
+    );
+  }
+
   if (role !== 'faculty' && role !== 'admin') {
     return (
       <>
@@ -193,7 +239,8 @@ function App() {
   }
 
   const me = profile ?? { name: user.email ?? 'Faculty', email: user.email ?? '' };
-  const where = findTab(activeTab);
+  const leaderTab = activeTab === 'directorOverview' || activeTab === 'meetings';
+  const where = leaderTab && !isLeader ? null : findTab(activeTab);
   const pageTitle = where ? where.item.label : 'Home';
 
   return (
@@ -205,6 +252,7 @@ function App() {
         profile={me}
         medicalWaiting={medicalWaiting}
         sosCount={sosAlerts?.length ?? null}
+        isLeader={isLeader}
         open={menuOpen}
         onClose={closeMenu}
       />
@@ -258,9 +306,32 @@ function App() {
               <span>{where.item.label}</span>
             </div>
           )}
+          {where?.item.sub && (
+            <div className="subtab-bar subtab-section">
+              <SegmentedControl<Tab>
+                size="sm"
+                options={where.item.sub.map((s) => ({ value: s.tab, label: s.label }))}
+                value={activeTab}
+                onChange={openTab}
+              />
+              {where.sub && <p className="subtab-hint">{where.sub.hint}</p>}
+            </div>
+          )}
 
           <Suspense fallback={<TabLoading />}>
-            {activeTab === 'home' && <Home name={me.name} medicalWaiting={medicalWaiting} onOpen={openTab} />}
+            {(activeTab === 'home' || (leaderTab && !isLeader)) && <Home name={me.name} medicalWaiting={medicalWaiting} onOpen={openTab} isLeader={isLeader} />}
+
+            {activeTab === 'directorOverview' && isLeader && (
+              <div className="panel-enter" key="directorOverview">
+                <DirectorDashboard onOpen={openTab} />
+              </div>
+            )}
+
+            {activeTab === 'meetings' && isLeader && (
+              <div className="panel-enter" key="meetings">
+                <Meetings myName={me.name} />
+              </div>
+            )}
 
             {activeTab === 'resources' && (
               <div className="panel-enter" key="resources">
@@ -282,7 +353,7 @@ function App() {
 
             {activeTab === 'complaints' && (
               <div className="panel-enter" key="complaints">
-                <Complaints />
+                <Complaints email={me.email} isAdmin={role === 'admin'} isLeader={isLeader} />
               </div>
             )}
 
@@ -294,7 +365,7 @@ function App() {
 
             {activeTab === 'sos' && (
               <div className="panel-enter" key="sos">
-                <SosBoard alerts={sosAlerts} me={{ name: me.name, email: me.email }} />
+                <SosBoard alerts={sosAlerts} me={{ name: me.name, email: me.email }} viewOnly={isLeader && role !== 'admin'} />
               </div>
             )}
 
@@ -368,18 +439,23 @@ function App() {
 
             {activeTab === 'exams' && (
               <div className="panel-enter" key="exams">
-                <ExamSchedule />
+                <ExamCellGate email={me.email} role={role} what="exam schedules">
+                  <ExamSchedule />
+                </ExamCellGate>
               </div>
             )}
 
             {activeTab === 'holidays' && (
               <div className="panel-enter" key="holidays">
-                <AddHoliday />
+                <ExamCellGate email={me.email} role={role} what="holidays">
+                  <AddHoliday />
+                </ExamCellGate>
               </div>
             )}
 
             {activeTab === 'messSubscribers' && (
               <div className="panel-enter" key="messSubscribers">
+                <MessAlwaysAvailable />
                 <MessSubscribersUpload />
               </div>
             )}
@@ -413,6 +489,12 @@ function App() {
               </div>
             )}
 
+            {activeTab === 'marks' && (
+              <div className="panel-enter" key="marks">
+                <UploadMarks />
+              </div>
+            )}
+
             {activeTab === 'grades' && (
               <div className="panel-enter" key="grades">
                 <AssignGrades />
@@ -434,6 +516,12 @@ function App() {
             {activeTab === 'examResults' && (
               <div className="panel-enter" key="examResults">
                 <ExamCell email={me.email} role={role} view="results" />
+              </div>
+            )}
+
+            {activeTab === 'quizzes' && (
+              <div className="panel-enter" key="quizzes">
+                <Quizzes canManageAll={role === 'admin'} />
               </div>
             )}
 

@@ -10,6 +10,7 @@ import {
   todayIso,
   weightOf,
   type ExcusalRange,
+  excusalCovers,
   type RosterEntry,
   type SessionDoc,
 } from './attendanceCore';
@@ -20,10 +21,10 @@ type Mark = 'P' | 'A' | 'OD' | 'NA';
 type Doc = SessionDoc & { id: string };
 type Col = { key: string; date: string; lecture: number; docs: Map<string, Doc>; isNew?: boolean; hours: number };
 
-const NEXT: Record<Mark, Mark> = { P: 'A', A: 'OD', OD: 'NA', NA: 'P' };
+const NEXT: Record<Mark, Mark> = { P: 'A', A: 'NA', OD: 'P', NA: 'P' };
 const colKey = (date: string, lecture: number) => `${date}#${lecture}`;
 const inRange = (d: string, from: string, to: string) => (!from || d >= from) && (!to || d <= to);
-const excusedOn = (date: string, ranges?: ExcusalRange[]) => !!ranges?.some((r) => date >= r.fromDate && date <= r.toDate);
+const excusedOn = (date: string, ranges?: ExcusalRange[], code?: string) => !!ranges?.some((r) => excusalCovers(r, date, code));
 
 function baseMark(s: RosterEntry, col: Col): Mark {
   const d = col.docs.get(s.branch);
@@ -141,13 +142,13 @@ export default function AttendanceRegister() {
         const m = markOf(s, c);
         if (m === 'NA') continue;
         held += c.hours;
-        if (m === 'P' || m === 'OD' || (m === 'A' && excusedOn(c.date, excusals.get(s.regNo)))) attended += c.hours;
+        if (m === 'P' || m === 'OD' || (m === 'A' && excusedOn(c.date, excusals.get(s.regNo), ctx?.subject?.code))) attended += c.hours;
       }
       out.set(s.regNo, { attended, held, pct: held ? Math.round((attended / held) * 1000) / 10 : null });
     }
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [students, shownCols, edits, excusals]);
+  }, [students, shownCols, edits, excusals, ctx?.subject?.code]);
 
   const gridRows = students.filter((s) => {
     if (q && !`${s.regNo} ${s.name}`.toLowerCase().includes(q)) return false;
@@ -424,7 +425,7 @@ export default function AttendanceRegister() {
                 </button>
               </div>
               <p className="res-hint">
-                Click a cell to cycle P → A → OD → — (not in this class, e.g. the other lab batch). Click a date to see that day and delete it. “—” means not this student’s class.
+                Click a cell to cycle P → A → — (not in this class, e.g. the other lab batch). Click a date to see that day and delete it. “—” means not this student’s class.
                 To fix many marks at once: Download, edit in Excel, then Upload — it updates these same classes.
               </p>
 
@@ -464,7 +465,7 @@ export default function AttendanceRegister() {
                             {shownCols.map((c) => {
                               const m = markOf(s, c);
                               const edited = edits.get(c.key)?.has(s.regNo);
-                              const exc = m === 'A' && excusedOn(c.date, excusals.get(s.regNo));
+                              const exc = m === 'A' && excusedOn(c.date, excusals.get(s.regNo), ctx?.subject?.code);
                               return (
                                 <td
                                   key={c.key}

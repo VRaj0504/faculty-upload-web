@@ -1,7 +1,17 @@
 import { SUPPORT } from './support';
 import { useState } from 'react';
-import { signInWithEmailAndPassword, sendPasswordResetEmail } from 'firebase/auth';
-import { auth } from './firebaseConfig';
+import {
+  signInWithEmailAndPassword,
+  sendPasswordResetEmail,
+  createUserWithEmailAndPassword,
+  sendEmailVerification,
+  updateProfile,
+  signInWithPopup,
+  GoogleAuthProvider,
+  signOut,
+} from 'firebase/auth';
+import { auth, functions } from './firebaseConfig';
+import { httpsCallable } from 'firebase/functions';
 import { Icon, type IconName } from './icons';
 
 const PREVIEW: { title: string; sub: string; icon: IconName; bg: string; fg: string }[] = [
@@ -44,10 +54,68 @@ function LoginBg({ tone }: { tone: 'dark' | 'light' }) {
   );
 }
 
+const DOMAIN = '@iiitsurat.ac.in';
+const isInstitute = (e: string) => e.trim().toLowerCase().endsWith(DOMAIN);
+
+function friendly(code: string): string {
+  switch (code) {
+    case 'auth/email-already-in-use':
+      return 'An account with this email already exists. Sign in instead, or use "Forgot password?".';
+    case 'auth/weak-password':
+      return 'Use a password with at least 8 characters.';
+    case 'auth/invalid-email':
+      return 'That email address looks wrong.';
+    case 'auth/popup-closed-by-user':
+    case 'auth/cancelled-popup-request':
+      return '';
+    case 'auth/popup-blocked':
+      return 'Your browser blocked the Google window. Allow pop-ups for this site and try again.';
+    case 'auth/network-request-failed':
+      return 'No internet connection. Check your connection and try again.';
+    case 'auth/too-many-requests':
+    case 'auth/quota-exceeded':
+      return 'Too many attempts from this network. Wait a few minutes, or use "Continue with Google".';
+    case 'auth/invalid-credential':
+    case 'auth/wrong-password':
+    case 'auth/user-not-found':
+      return 'Wrong email or password.';
+    case 'auth/user-disabled':
+      return 'This account has been disabled. Contact the admin.';
+    case 'auth/internal-error':
+      return 'The sign-in service is busy. Try again in a moment.';
+    default:
+      return 'Something went wrong. Please try again.';
+  }
+}
+
+const TRANSIENT = new Set(['functions/unavailable', 'functions/deadline-exceeded', 'functions/internal', 'auth/network-request-failed', 'auth/internal-error']);
+async function withRetry<T>(fn: () => Promise<T>, tries = 3): Promise<T> {
+  for (let i = 0; ; i++) {
+    try {
+      return await fn();
+    } catch (e: any) {
+      if (!TRANSIENT.has(e?.code) || i >= tries - 1) throw e;
+      await new Promise((r) => setTimeout(r, 600 * 2 ** i + Math.random() * 600));
+    }
+  }
+}
+
 function Login() {
+  const [mode, setMode] = useState<'signin' | 'signup'>('signin');
+  const [name, setName] = useState('');
+  const [confirm, setConfirm] = useState('');
+  const [googleBusy, setGoogleBusy] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
+  const [error, setError] = useState(() => {
+    try {
+      const n = sessionStorage.getItem('cg-portal-notice') ?? '';
+      if (n) sessionStorage.removeItem('cg-portal-notice');
+      return n;
+    } catch {
+      return '';
+    }
+  });
   const [info, setInfo] = useState('');
   const [loading, setLoading] = useState(false);
   const [resetting, setResetting] = useState(false);
@@ -58,10 +126,65 @@ function Login() {
     setInfo('');
     setLoading(true);
     try {
-      await signInWithEmailAndPassword(auth, email.trim(), password);
+      await withRetry(() => signInWithEmailAndPassword(auth, email.trim(), password));
     } catch (err: any) {
-      setError('Wrong email or password.');
+      setError(friendly(err?.code ?? ''));
       console.error('Login error:', err.code);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleGoogle = async () => {
+    setError('');
+    setInfo('');
+    setGoogleBusy(true);
+    try {
+      const provider = new GoogleAuthProvider();
+      provider.setCustomParameters({ hd: 'iiitsurat.ac.in', prompt: 'select_account' });
+      const res = await signInWithPopup(auth, provider);
+      const got = (res.user.email ?? '').toLowerCase();
+      if (!isInstitute(got)) {
+        await signOut(auth);
+        setError(`${got || 'That account'} isn't an institute account. Choose your ${DOMAIN} Google account.`);
+      }
+    } catch (err: any) {
+      const msg = friendly(err?.code ?? '');
+      if (msg) setError(msg);
+    } finally {
+      setGoogleBusy(false);
+    }
+  };
+
+  const handleSignup = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    setInfo('');
+    const em = email.trim().toLowerCase();
+    if (!name.trim()) return setError('Enter your full name.');
+    if (!isInstitute(em)) return setError(`Use your institute email (${DOMAIN}).`);
+    if (password.length < 8) return setError('Use a password with at least 8 characters.');
+    if (password !== confirm) return setError("The two passwords don't match.");
+    setLoading(true);
+    try {
+      let created = false;
+      try {
+        await withRetry(() => httpsCallable(functions, 'createAccount')({ name: name.trim(), email: em, password, audience: 'faculty' }));
+        created = true;
+      } catch (e: any) {
+        if (e?.code === 'functions/already-exists') throw { code: 'auth/email-already-in-use' };
+        if (e?.code === 'functions/failed-precondition' || e?.code === 'functions/invalid-argument') throw { code: 'server', message: e.message };
+        if (e?.code !== 'functions/not-found' && e?.code !== 'functions/unimplemented' && !TRANSIENT.has(e?.code)) throw e;
+      }
+      if (created) {
+        await withRetry(() => signInWithEmailAndPassword(auth, em, password));
+      } else {
+        const cred = await createUserWithEmailAndPassword(auth, em, password);
+        await updateProfile(cred.user, { displayName: name.trim() }).catch(() => undefined);
+      }
+      if (auth.currentUser) await withRetry(() => sendEmailVerification(auth.currentUser!)).catch(() => undefined);
+    } catch (err: any) {
+      setError(err?.code === 'server' ? err.message : friendly(err?.code ?? ''));
     } finally {
       setLoading(false);
     }
@@ -77,11 +200,16 @@ function Login() {
     }
     setResetting(true);
     try {
-      await sendPasswordResetEmail(auth, email.trim());
+      await withRetry(() => sendPasswordResetEmail(auth, email.trim()));
       setInfo(`Reset link sent to ${email.trim()}. Check your inbox.`);
     } catch (err: any) {
-
-      setError('Could not send a reset link. Check the email address and try again.');
+      setError(
+        err?.code === 'auth/too-many-requests'
+          ? 'A reset link was sent recently. Check your inbox (and spam), or try again in a few minutes.'
+          : err?.code === 'auth/network-request-failed'
+            ? 'No internet connection. Check your connection and try again.'
+            : 'Could not send a reset link. Check the email address and try again.',
+      );
       console.error('Password reset error:', err.code);
     } finally {
       setResetting(false);
@@ -140,9 +268,48 @@ function Login() {
           </div>
 
           <p className="eyebrow" style={{ margin: 0 }}>Faculty portal</p>
-          <h1>Sign in</h1>
-          <p className="login-lead">Use your institute email.</p>
+          <h1>{mode === 'signin' ? 'Sign in' : 'Create account'}</h1>
+          <p className="login-lead">
+            {mode === 'signin' ? 'Use your institute email.' : 'For faculty on the approved list. Use your institute email.'}
+          </p>
 
+          <button type="button" className="google-btn" onClick={handleGoogle} disabled={googleBusy || loading}>
+            <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true">
+              <path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.3 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z" />
+              <path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z" />
+              <path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2c-2 1.5-4.5 2.4-7.2 2.4-5.3 0-9.7-3.3-11.3-8l-6.5 5C9.5 39.6 16.2 44 24 44z" />
+              <path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 38.4 44 33 44 24c0-1.3-.1-2.4-.4-3.5z" />
+            </svg>
+            {googleBusy ? 'Opening Google…' : 'Continue with Google'}
+          </button>
+          <div className="login-or"><span>or with email</span></div>
+
+          {mode === 'signup' ? (
+          <form onSubmit={handleSignup}>
+            <label htmlFor="signup-name">Full name</label>
+            <input id="signup-name" autoComplete="name" placeholder="Dr. Firstname Lastname" value={name} onChange={(e) => setName(e.target.value)} required />
+            <label htmlFor="signup-email" style={{ marginTop: '1rem' }}>Institute email</label>
+            <input id="signup-email" type="email" autoComplete="username" placeholder="name@iiitsurat.ac.in" value={email} onChange={(e) => setEmail(e.target.value)} required />
+            <label htmlFor="signup-password" style={{ marginTop: '1rem' }}>Password</label>
+            <input id="signup-password" type="password" autoComplete="new-password" placeholder="At least 8 characters" value={password} onChange={(e) => setPassword(e.target.value)} required />
+            <label htmlFor="signup-confirm" style={{ marginTop: '1rem' }}>Confirm password</label>
+            <input id="signup-confirm" type="password" autoComplete="new-password" value={confirm} onChange={(e) => setConfirm(e.target.value)} required />
+            {error && (
+              <div className="notice notice-error" role="alert">
+                {error}
+              </div>
+            )}
+            <button type="submit" disabled={loading} style={{ width: '100%', marginTop: '1.4rem', padding: '0.8rem 1.2rem' }}>
+              {loading ? 'Creating account…' : 'Create account'}
+            </button>
+            <p className="login-foot" style={{ marginTop: '1rem' }}>
+              Already have an account?{' '}
+              <button type="button" className="link-button" onClick={() => { setMode('signin'); setError(''); setInfo(''); }}>
+                Sign in
+              </button>
+            </p>
+          </form>
+          ) : (
           <form onSubmit={handleLogin}>
             <label htmlFor="login-email">Email</label>
             <input
@@ -192,7 +359,14 @@ function Login() {
             <button type="submit" disabled={loading} style={{ width: '100%', marginTop: '1.4rem', padding: '0.8rem 1.2rem' }}>
               {loading ? 'Signing in…' : 'Sign in'}
             </button>
+            <p className="login-foot" style={{ marginTop: '1rem' }}>
+              New here?{' '}
+              <button type="button" className="link-button" onClick={() => { setMode('signup'); setError(''); setInfo(''); }}>
+                Create an account
+              </button>
+            </p>
           </form>
+          )}
 
           <p className="login-foot">For faculty and admin accounts. Students use the CollegeGo app.</p>
           <p className="login-foot" style={{ marginTop: '0.4rem' }}>

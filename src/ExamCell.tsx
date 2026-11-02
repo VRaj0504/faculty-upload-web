@@ -5,6 +5,7 @@ import { loadExamAccess, type ExamAccess } from './examData';
 
 const ExamStatusBoard = lazyRetry(() => import('./ExamStatusBoard'));
 const ResultUpload = lazyRetry(() => import('./ResultUpload'));
+const PublishResults = lazyRetry(() => import('./PublishResults'));
 const ExamEvents = lazyRetry(() => import('./ExamEvents'));
 
 export type ExamView = 'status' | 'results' | 'notices';
@@ -29,7 +30,7 @@ export function useExamAccess(email: string, role: string | null): ExamAccess {
   return access;
 }
 
-const Loading = () => (
+export const Loading = () => (
   <div style={{ padding: '4rem 0' }}>
     <BrandLoader />
   </div>
@@ -57,8 +58,14 @@ export default function ExamCell({ email, role, view }: { email: string; role: s
   return (
     <Suspense fallback={<Loading />}>
       {view === 'status' && <ExamStatusBoard branchesAllowed={access.full ? null : access.hodBranches} />}
-      {view === 'results' && <ResultUpload />}
+      {view === 'results' && (
+        <>
+          <PublishResults />
+          <ResultUpload />
+        </>
+      )}
       {view === 'notices' && <ExamEvents canManage={access.full} hodBranches={access.hodBranches} />}
     </Suspense>
   );
 }
+
