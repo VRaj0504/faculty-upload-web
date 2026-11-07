@@ -12,9 +12,9 @@ export type ExamEntry = {
 export const EXAM_TYPES = [
   { id: 'quiz', label: 'Quiz / Internal' },
   { id: 'midsem', label: 'Mid Semester' },
-  { id: 'midsem-repeaters', label: 'Mid Semester (Repeaters)' },
+  { id: 'midsem-repeaters', label: 'Make-up (Mid Sem)' },
   { id: 'endsem', label: 'End Semester' },
-  { id: 'endsem-repeaters', label: 'End Semester (Repeaters)' },
+  { id: 'endsem-repeaters', label: 'Repeaters (End Sem)' },
   { id: 'supplementary', label: 'Supplementary / Re-exam' },
 ] as const;
 export type ExamTypeId = (typeof EXAM_TYPES)[number]['id'];
@@ -253,6 +253,10 @@ for (const t of EXAM_TYPES) {
 
 EXAM_TYPE_BY_NORM.set(norm('midsem'), 'midsem');
 EXAM_TYPE_BY_NORM.set(norm('mid sem'), 'midsem');
+EXAM_TYPE_BY_NORM.set(norm('Mid Semester (Repeaters)'), 'midsem-repeaters');
+EXAM_TYPE_BY_NORM.set(norm('End Semester (Repeaters)'), 'endsem-repeaters');
+EXAM_TYPE_BY_NORM.set(norm('make up'), 'midsem-repeaters');
+EXAM_TYPE_BY_NORM.set(norm('makeup'), 'midsem-repeaters');
 EXAM_TYPE_BY_NORM.set(norm('midsem repeater'), 'midsem-repeaters');
 EXAM_TYPE_BY_NORM.set(norm('midsem repeaters'), 'midsem-repeaters');
 EXAM_TYPE_BY_NORM.set(norm('mid sem repeaters'), 'midsem-repeaters');

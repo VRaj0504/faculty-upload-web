@@ -3,13 +3,16 @@ import { collection, addDoc, serverTimestamp, query, where, orderBy, onSnapshot,
 import { ref, uploadBytesResumable, getDownloadURL, deleteObject } from 'firebase/storage';
 import { auth, db, storage } from './firebaseConfig';
 import { curriculum } from './curriculum';
-import { batchChoices, currentAcademicYear, examYearOptions } from './academicYear';
+import { academicYearStartFor, batchChoices, currentAcademicYear, examYearOptions } from './academicYear';
 import { labStatusFor, type LabStatus } from './labDetection';
+import { getDocsCached } from './cachedCollection';
+
+const BLOCKED_EXT = /\.(exe|msi|bat|cmd|com|scr|ps1|vbs|sh|apk|aab|ipa|dmg|pkg|app|jar)$/i;
 
 const BRANCHES = ['CSE', 'ECE', 'MNC'] as const;
 
-const SECTIONS = ['A', 'B', 'C', 'D'] as const;
 const SEMESTERS = [1, 2, 3, 4, 5, 6, 7, 8] as const;
+const UNITS = [1, 2, 3, 4, 5, 6] as const;
 
 const TYPES = ['Notes', 'Slides', 'Assignment', 'PYQ'] as const;
 const BATCH_CHOICES = batchChoices();
@@ -25,6 +28,10 @@ type CommonSubject = {
   perBranch: Record<BranchCode, { code: string; name: string }>;
 };
 
+type RosterLite = { branch: string; section: string; admissionYear: number };
+
+const admissionYearForSemester = (sem: number) => academicYearStartFor(new Date()) - Math.floor((sem - 1) / 2);
+
 const normName = (s: string) => s.trim().toLowerCase().replace(/\s+/g, ' ');
 
 const pathSafe = (s: string) => s.replace(/[/\\#?[\]*]+/g, '-');
@@ -37,10 +44,15 @@ type MyResource = {
   semester: number;
   type: string;
   storagePath: string;
+  unit?: number | null;
+  isLink?: boolean;
 };
 
 function Upload() {
   const [files, setFiles] = useState<File[]>([]);
+  const [source, setSource] = useState<'file' | 'link'>('file');
+  const [offline, setOffline] = useState(false);
+  const [link, setLink] = useState('');
   const [title, setTitle] = useState('');
   const [branch, setBranch] = useState<typeof BRANCHES[number]>('CSE');
   const [allBranches, setAllBranches] = useState(false);
@@ -58,6 +70,7 @@ function Upload() {
   const [academicYear, setAcademicYear] = useState<string>(currentAcademicYear());
 
   const [examYear, setExamYear] = useState<number | ''>('');
+  const [unit, setUnit] = useState<number | ''>('');
 
   const [semesterTimetables, setSemesterTimetables] = useState<any[] | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -66,6 +79,29 @@ function Upload() {
   const [message, setMessage] = useState('');
   const [myResources, setMyResources] = useState<MyResource[]>([]);
   const [myResourcesError, setMyResourcesError] = useState('');
+
+  const [roster, setRoster] = useState<RosterLite[] | null>(null);
+  useEffect(() => {
+    getDocsCached('roster')
+      .then((snap) =>
+        setRoster(
+          snap.docs.flatMap((d) => {
+            const r = d.data() as { branch?: string; section?: string; admissionYear?: number; program?: string };
+            if (r.program === 'PG' || /^PG/i.test(d.id)) return [];
+            const sec = String(r.section ?? '').trim();
+            return r.branch && sec && typeof r.admissionYear === 'number' ? [{ branch: r.branch, section: sec, admissionYear: r.admissionYear }] : [];
+          }),
+        ),
+      )
+      .catch(() => setRoster([]));
+  }, []);
+  const classYear = admissionYearForSemester(semester);
+  const sectionOptions = Array.from(
+    new Set((roster ?? []).filter((r) => r.branch === branch && r.admissionYear === classYear).map((r) => r.section)),
+  ).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  useEffect(() => {
+    if (section && (allBranches || (roster && !sectionOptions.includes(section)))) setSection('');
+  }, [branch, semester, allBranches, roster]);
 
   const subjectOptions = curriculum[branch]?.[semester] ?? [];
 
@@ -179,6 +215,62 @@ function Upload() {
       setMessage('Pick at least one branch for the common subject.');
       return;
     }
+    if (source === 'link') {
+      if (!effectiveSubject || !title.trim()) {
+        setMessage('Please fill in all fields: subject, title and the link.');
+        return;
+      }
+      let url: URL | null = null;
+      try {
+        url = new URL(link.trim());
+      } catch {
+        url = null;
+      }
+      if (!url || !/^https?:$/.test(url.protocol)) {
+        setMessage('Could not use that link. Paste the full address starting with https://');
+        return;
+      }
+      if (type === 'PYQ' && examYear === '') {
+        setMessage('Pick the exam year — papers are filed by the year the exam was held.');
+        return;
+      }
+      setUploading(true);
+      setMessage('');
+      try {
+        const targetBranches: readonly BranchCode[] = allBranches ? commonBranches : [branch];
+        await Promise.all(
+          targetBranches.map((b) =>
+            addDoc(collection(db, 'resources'), {
+              title: title.trim(),
+              ...subjectFor(b),
+              branch: b,
+              semester,
+              section: allBranches ? null : section.trim() || null,
+              type,
+              academicYear,
+              examYear: type === 'PYQ' ? Number(examYear) : null,
+              unit: type === 'PYQ' || unit === '' ? null : unit,
+              fileUrl: url!.href,
+              isLink: true,
+              linkHost: url!.hostname.replace(/^www\./, ''),
+              uploadedBy: auth.currentUser?.uid,
+              storagePath: null,
+              uploadedByName: auth.currentUser?.email,
+              createdAt: serverTimestamp(),
+            }),
+          ),
+        );
+        setMessage('Link shared' + (allBranches ? ` for ${commonBranches.join(', ')}.` : '.'));
+        setLink('');
+        setTitle('');
+        setCustomSubject('');
+      } catch (err: any) {
+        setMessage(`Could not share this link: ${err.message}`);
+      } finally {
+        setUploading(false);
+      }
+      return;
+    }
     if (files.length === 0 || !effectiveSubject) {
       setMessage('Please fill in all fields and choose at least one file.');
       return;
@@ -209,24 +301,45 @@ function Upload() {
     setUploadProgress(0);
     setUploadFileIndex(0);
     setMessage('');
+    const queue = [...files];
+    const total = queue.length;
+    let doneCount = 0;
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    let current: ReturnType<typeof uploadBytesResumable> | null = null;
+    const goOffline = () => {
+      setOffline(true);
+      current?.pause();
+    };
+    const goOnline = () => {
+      setOffline(false);
+      current?.resume();
+    };
+    window.addEventListener('offline', goOffline);
+    window.addEventListener('online', goOnline);
     try {
       const targetBranches: readonly BranchCode[] = allBranches ? commonBranches : [branch];
       const stripExtension = (filename: string) => filename.replace(/\.[^.]+$/, '');
 
-      for (let i = 0; i < files.length; i++) {
-        const currentFile = files[i];
+      for (let i = 0; i < queue.length; i++) {
+        const currentFile = queue[i];
         setUploadFileIndex(i + 1);
         setUploadProgress(0);
 
-        const fileTitle = files.length > 1 ? stripExtension(currentFile.name) : title;
+        const fileTitle = total > 1 ? stripExtension(currentFile.name) : title;
         const storagePath = `resources/${allBranches ? 'ALL' : branch}/${semester}/${pathSafe(effectiveSubject)}/${Date.now()}-${pathSafe(currentFile.name)}`;
         const fileRef = ref(storage, storagePath);
 
         const fileUrl = await new Promise<string>((resolve, reject) => {
           const uploadTask = uploadBytesResumable(fileRef, currentFile, {
-            contentType: currentFile.type,
+            contentType: currentFile.type || 'application/octet-stream',
             cacheControl: 'public,max-age=31536000,immutable',
           });
+          current = uploadTask;
+          if (!navigator.onLine) goOffline();
           uploadTask.on(
             'state_changed',
             (snapshot) => {
@@ -242,6 +355,7 @@ function Upload() {
             },
           );
         });
+        current = null;
 
         await Promise.all(
           targetBranches.map((b) =>
@@ -250,10 +364,11 @@ function Upload() {
               ...subjectFor(b),
               branch: b,
               semester,
-              section: section.trim().toUpperCase() || null,
+              section: allBranches ? null : section.trim() || null,
               type,
               academicYear,
               examYear: type === 'PYQ' ? Number(examYear) : null,
+              unit: type === 'PYQ' || unit === '' ? null : unit,
               fileUrl,
               uploadedBy: auth.currentUser?.uid,
               storagePath,
@@ -262,18 +377,29 @@ function Upload() {
             }),
           ),
         );
+        doneCount++;
+        setFiles(queue.slice(i + 1));
       }
 
       setMessage(
-        (files.length > 1 ? `${files.length} files filed successfully` : 'Filed successfully') +
+        (total > 1 ? `${total} files filed successfully` : 'Filed successfully') +
           (allBranches ? ` for ${commonBranches.join(', ')}.` : '.'),
       );
       setFiles([]);
       setTitle('');
       setCustomSubject('');
     } catch (err: any) {
-      setMessage(`Could not file this item (file ${uploadFileIndex} of ${files.length}): ${err.message}`);
+      const left = total - doneCount;
+      setMessage(
+        `Could not finish: the upload stopped (${err?.code === 'storage/retry-limit-exceeded' || !navigator.onLine ? 'the internet connection dropped' : err.message}). ` +
+          (doneCount ? `${doneCount} of ${total} file${total === 1 ? ' was' : 's were'} filed and are safe. ` : '') +
+          `The ${left} remaining file${left === 1 ? ' is' : 's are'} still selected below — press the button again to continue.`,
+      );
     } finally {
+      window.removeEventListener('beforeunload', onBeforeUnload);
+      window.removeEventListener('offline', goOffline);
+      window.removeEventListener('online', goOnline);
+      setOffline(false);
       setUploading(false);
       setUploadProgress(0);
       setUploadFileIndex(0);
@@ -309,12 +435,14 @@ function Upload() {
   const fmtSize = (bytes: number) =>
     bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
   const acceptFiles = (list: FileList | null) => {
-    const picked = Array.from(list ?? []).filter((f) => /\.(pdf|pptx?)$/i.test(f.name));
+    const all = Array.from(list ?? []);
+    const picked = all.filter((f) => !BLOCKED_EXT.test(f.name));
+    const skipped = all.length - picked.length;
     if (picked.length) {
       setFiles(picked);
-      setMessage('');
-    } else if (list && list.length) {
-      setMessage('Could not use that file — only PDF or PPT/PPTX can be filed.');
+      setMessage(skipped ? `${skipped} program file${skipped === 1 ? '' : 's'} (like .exe or .apk) skipped. Everything else is fine.` : '');
+    } else if (all.length) {
+      setMessage('Program files like .exe, .apk or .bat cannot be filed. Any document, sheet, slide, image, zip or code file works.');
     }
   };
 
@@ -354,9 +482,9 @@ function Upload() {
               </div>
               <div>
                 <label>Section</label>
-                <select value={section} onChange={(e) => setSection(e.target.value)}>
+                <select value={section} onChange={(e) => setSection(e.target.value)} disabled={allBranches || sectionOptions.length === 0}>
                   <option value="">All sections</option>
-                  {SECTIONS.map((sec) => <option key={sec} value={sec}>{sec}</option>)}
+                  {sectionOptions.map((sec) => <option key={sec} value={sec}>{sec}</option>)}
                 </select>
               </div>
             </div>
@@ -478,7 +606,17 @@ function Upload() {
                 </div>
               )}
             </div>
+            {type !== 'PYQ' && (
+              <div className="res-year" style={{ marginTop: '0.8rem', maxWidth: 260 }}>
+                <label>Unit</label>
+                <select value={unit} onChange={(e) => setUnit(e.target.value === '' ? '' : Number(e.target.value))}>
+                  <option value="">No unit</option>
+                  {UNITS.map((u) => <option key={u} value={u}>Unit {u}</option>)}
+                </select>
+              </div>
+            )}
             <p className="res-hint">
+              {type !== 'PYQ' && unit !== '' && `Every file in this upload goes into the Unit ${unit} folder. `}
               {type === 'PYQ'
                 ? 'Papers stay visible to every future batch, filed under the year the exam was held.'
                 : type === 'Assignment'
@@ -492,10 +630,31 @@ function Upload() {
             <div className="res-step-head">
               <span className="res-step-num">3</span>
               <div>
-                <h2>File</h2>
-                <p>PDF or PowerPoint, up to {MAX_FILE_MB} MB each. Several at once is fine.</p>
+                <h2>{source === 'link' ? 'Link' : 'File'}</h2>
+                <p>{source === 'link' ? 'A Google Drive, YouTube or website link students open in their browser.' : `Any file type (PDF, Word, Excel, CSV, PowerPoint, images, zip, code), up to ${MAX_FILE_MB} MB each. Several at once is fine.`}</p>
               </div>
             </div>
+            <div className="res-types" style={{ marginBottom: '0.9rem' }}>
+              {(['file', 'link'] as const).map((m) => (
+                <button key={m} type="button" className={`res-type${source === m ? ' res-type-on' : ''}`} onClick={() => { setSource(m); setMessage(''); }}>
+                  {m === 'file' ? 'Upload files' : 'Share a link'}
+                </button>
+              ))}
+            </div>
+            {source === 'link' ? (
+              <div style={{ display: 'grid', gap: '0.9rem' }}>
+                <div>
+                  <label>Link</label>
+                  <input value={link} onChange={(e) => setLink(e.target.value)} placeholder="https://drive.google.com/… or a YouTube / website link" inputMode="url" />
+                  <p className="res-hint" style={{ marginTop: '0.35rem' }}>Students open it in their browser. For Google Drive, set sharing to "Anyone with the link".</p>
+                </div>
+                <div>
+                  <label>Title</label>
+                  <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Unit 3 lecture video" />
+                </div>
+              </div>
+            ) : (
+            <>
             <label
               className={`res-drop${files.length ? ' res-drop-has' : ''}`}
               onDragOver={(e) => {
@@ -511,7 +670,6 @@ function Upload() {
             >
               <input
                 type="file"
-                accept=".pdf,.ppt,.pptx"
                 multiple
                 className="res-drop-input"
                 onChange={(e) => {
@@ -527,7 +685,7 @@ function Upload() {
                     </svg>
                   </span>
                   <strong>Drop files here or click to choose</strong>
-                  <span>PDF, PPT, PPTX</span>
+                  <span>PDF, DOC/DOCX, XLS/XLSX, CSV, PPT/PPTX, images, ZIP and more</span>
                 </>
               ) : (
                 <div className="res-files">
@@ -550,24 +708,33 @@ function Upload() {
                 <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Unit 3 Notes" />
               </div>
             )}
+            </>
+            )}
           </section>
 
           {message && (
-            <div className={`notice ${message.startsWith('Could not') ? 'notice-error' : 'notice-ok'}`} role="status">
+            <div className={`notice ${message.startsWith('Could not') || message.startsWith('Please') ? 'notice-error' : 'notice-ok'}`} role="status">
               {message}
             </div>
           )}
 
           <div className="res-submit">
             <button onClick={handleUpload} disabled={uploading}>
-              {uploading
-                ? files.length > 1
-                  ? `Filing ${uploadFileIndex} of ${files.length}… ${uploadProgress}%`
-                  : `Filing… ${uploadProgress}%`
+              {source === 'link'
+                ? uploading ? 'Sharing…' : 'Share link'
+                : uploading
+                ? files.length > 1 || uploadFileIndex > 1
+                  ? `Filing file ${uploadFileIndex}… ${uploadProgress}%${offline ? ' (paused)' : ''}`
+                  : `Filing… ${uploadProgress}%${offline ? ' (paused)' : ''}`
                 : files.length > 1
                   ? `File ${files.length} resources`
                   : 'File resource'}
             </button>
+            {uploading && offline && (
+              <p className="res-hint" style={{ color: '#b45309', marginTop: '0.5rem' }}>
+                No internet — upload paused. It continues by itself when you're back online. Keep this tab open.
+              </p>
+            )}
             {uploading && (
               <div className="res-progress">
                 <div style={{ width: `${uploadProgress}%` }} />
@@ -589,7 +756,7 @@ function Upload() {
                 <div style={{ minWidth: 0 }}>
                   <div className="res-mine-title">{item.title}</div>
                   <div className="res-mine-meta">
-                    {item.branch} · Sem {item.semester} · {item.type === 'PYQ' ? 'Prev. paper' : item.type}
+                    {item.branch} · Sem {item.semester} · {item.isLink ? 'Link · ' : ''}{item.type === 'PYQ' ? 'Prev. paper' : item.type}{item.unit ? ` · Unit ${item.unit}` : ''}
                   </div>
                 </div>
                 <button className="button-secondary" onClick={() => handleDelete(item)}>Delete</button>

@@ -7,7 +7,8 @@ import { gradesTemplate } from './xlsxTemplates';
 import { curriculum as staticCurriculum } from './curriculum';
 import { COURSE_CREDITS } from './curriculumCredits';
 import SegmentedControl from './SegmentedControl';
-import MarksTable, { type TableMark } from './MarksTable';
+import { type TableMark } from './MarksTable';
+import PublishedMarks from './PublishedMarks';
 
 const ALL_BRANCHES = ['CSE', 'ECE', 'MNC'];
 
@@ -484,9 +485,9 @@ function AssignGrades() {
     <div className="card" style={{ width: mode === 'table' ? 1040 : 720, maxWidth: '100%', padding: '2.5rem', margin: '3rem auto' }}>
       <h1 style={{ fontSize: '1.5rem' }}>Assign Grades from Marks</h1>
       <p style={{ fontSize: '0.85rem', color: 'var(--ink-soft)' }}>
-        Enter the marks right here in a ready-made table (quizzes, mid sem, end sem), or upload an Excel
-        sheet with Enrollment No, Name and a Total column. Either way you decide every grade cutoff
-        yourself — nothing here is auto-suggested.
+        Totals come straight from the marks already published on the Marks page (quizzes, mid sem, end sem,
+        attendance), so nothing is typed twice. Or upload an Excel sheet with Enrollment No, Name and a Total
+        column. Either way you set every grade cutoff yourself.
       </p>
 
       <div style={{ display: 'flex', gap: '1rem', marginTop: '1.5rem' }}>
@@ -534,7 +535,7 @@ function AssignGrades() {
         <SegmentedControl<'table' | 'excel'>
           size="sm"
           options={[
-            { value: 'table', label: 'Enter marks here' },
+            { value: 'table', label: 'From published marks' },
             { value: 'excel', label: 'Upload Excel' },
           ]}
           value={mode}
@@ -551,9 +552,9 @@ function AssignGrades() {
 
       {mode === 'table' && (
         subjectCode && admissionYear && branch && section ? (
-          <MarksTable
+          <PublishedMarks
             students={tableStudents}
-            draftKey={`${admissionYear}|${branch}|${section}|${subjectCode}`}
+            subjectCode={subjectCode}
             onMarks={onTableMarks}
             gradeFor={gradeFor}
             overrides={overrides}

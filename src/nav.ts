@@ -19,7 +19,6 @@ export type Tab =
   | 'medicalLeaves'
   | 'sos'
   | 'complaints'
-  | 'reports'
   | 'timetable'
   | 'exams'
   | 'quizzes'
@@ -27,6 +26,8 @@ export type Tab =
   | 'roomCleanup'
   | 'curriculum'
   | 'messSubscribers'
+  | 'placementStats'
+  | 'classChanges'
   | 'inboxImports'
   | 'directorOverview'
   | 'meetings';
@@ -164,13 +165,11 @@ export const NAV: NavGroup[] = [
       { tab: 'sos', label: 'SOS alerts', hint: 'Live student emergencies', icon: 'alert' },
       { tab: 'medicalLeaves', label: 'Medical leaves', hint: 'Office → MO → HOD, Dean, JR', icon: 'medical' },
       { tab: 'complaints', label: 'Complaints & doubts', hint: 'From students', icon: 'chat' },
-      { tab: 'reports', label: 'Reported posts', hint: 'Lost & Found flags', icon: 'alert' },
     ],
     prefetch: () => {
       import('./MedicalLeaves');
       import('./SosBoard');
       import('./Complaints');
-      import('./Reports');
     },
   },
   {
@@ -183,8 +182,10 @@ export const NAV: NavGroup[] = [
       { tab: 'timetable', label: 'Class timetables', hint: 'Import & edit', icon: 'grid' },
       { tab: 'holidays', label: 'Holidays', hint: 'Add a day off', icon: 'sun' },
       { tab: 'roomCleanup', label: 'Room names', hint: 'Fix duplicates', icon: 'door' },
+      { tab: 'classChanges', label: 'Class changes', hint: 'Cancelled or moved classes', icon: 'calendar' },
     ],
     prefetch: () => {
+      import('./ClassChanges');
       import('./TimetableEditor');
       import('./AddHoliday');
       import('./RoomCleanup');
@@ -199,12 +200,14 @@ export const NAV: NavGroup[] = [
     items: [
       { tab: 'curriculum', label: 'Curriculum', hint: 'Subjects per semester', icon: 'book' },
       { tab: 'messSubscribers', label: 'Mess', hint: 'Prices & thali subscribers', icon: 'thali' },
+      { tab: 'placementStats', label: 'Placements', hint: 'Numbers on the app page', icon: 'chart' },
       { tab: 'inboxImports', label: 'Inbox imports', hint: 'From email', icon: 'inbox' },
     ],
     prefetch: () => {
       import('./CurriculumUpload');
       import('./CurriculumBrowser');
       import('./MessSubscribersUpload');
+      import('./PlacementStats');
       import('./InboxImports');
     },
   },

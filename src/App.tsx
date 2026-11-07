@@ -16,6 +16,7 @@ import Home from './Home';
 import { Icon } from './icons';
 import { ALL_NAV_TABS, findTab, toneVars, type Tab } from './nav';
 import { useIsLeader } from './useIsLeader';
+import { useNonTeaching } from './useNonTeaching';
 import { useMedicalWaiting } from './useMedicalWaiting';
 import { useActiveSos } from './useActiveSos';
 
@@ -30,6 +31,8 @@ const MyTimetable = lazyRetry(() => import('./MyTimetable'));
 const ExamSchedule = lazyRetry(() => import('./ExamSchedule'));
 const AddHoliday = lazyRetry(() => import('./AddHoliday'));
 const MessSubscribersUpload = lazyRetry(() => import('./MessSubscribersUpload'));
+const PlacementStats = lazyRetry(() => import('./PlacementStats'));
+const ClassChanges = lazyRetry(() => import('./ClassChanges'));
 const MessAlwaysAvailable = lazyRetry(() => import('./MessAlwaysAvailable'));
 const AttendanceUpload = lazyRetry(() => import('./AttendanceUpload'));
 const AssignGrades = lazyRetry(() => import('./AssignGrades'));
@@ -45,7 +48,6 @@ const InboxImports = lazyRetry(() => import('./InboxImports'));
 const Announcements = lazyRetry(() => import('./Announcements'));
 const Notices = lazyRetry(() => import('./Notices'));
 const Complaints = lazyRetry(() => import('./Complaints'));
-const Reports = lazyRetry(() => import('./Reports'));
 const MedicalLeaves = lazyRetry(() => import('./MedicalLeaves'));
 const SosBoard = lazyRetry(() => import('./SosBoard'));
 const DirectorDashboard = lazyRetry(() => import('./DirectorDashboard'));
@@ -60,6 +62,7 @@ function TabLoading() {
 }
 
 const ALL_TABS = new Set<Tab>(['home', ...ALL_NAV_TABS]);
+const TEACHING_ONLY = new Set<Tab>(['attendance', 'marks', 'grades', 'quizzes', 'roster', 'curriculum', 'timetable', 'roomCleanup']);
 const tabFromHash = (): Tab => {
   const h = window.location.hash.replace(/^#\/?/, '') as Tab;
   return ALL_TABS.has(h) ? h : 'home';
@@ -89,9 +92,10 @@ function App() {
 
   const sosAlerts = useActiveSos(role === 'faculty' || role === 'admin');
   const isLeader = useIsLeader(role, profile?.email ?? null);
+  const nonTeaching = useNonTeaching(role, profile?.email ?? null);
   const sosOpen = sosAlerts?.filter((a) => a.status === 'open').length ?? 0;
   useEffect(() => {
-    const base = 'CollegeGo × IIIT Surat';
+    const base = 'CollegeGo Faculty';
     document.title = sosOpen > 0 ? `(${sosOpen}) SOS · ${base}` : base;
   }, [sosOpen]);
 
@@ -151,7 +155,7 @@ function App() {
           const nextRole = data?.isAdmin === true ? 'admin' : data?.role ?? null;
           if (nextRole === 'student') {
             try {
-              sessionStorage.setItem('cg-portal-notice', 'This portal is only for faculty and admin accounts. Students can use the IIIT Surat app.');
+              sessionStorage.setItem('cg-portal-notice', 'This portal is only for faculty and admin accounts. Students can use the CollegeGo app.');
             } catch {
 
             }
@@ -230,7 +234,7 @@ function App() {
             </span>
             <h2 style={{ fontSize: '1.25rem', margin: '0 0 0.4rem' }}>Faculty only</h2>
             <p style={{ margin: 0, color: 'var(--ink-soft)' }}>
-              This portal is for faculty and admin accounts. Students can use the IIIT Surat app.
+              This portal is for faculty and admin accounts. Students can use the CollegeGo app.
             </p>
           </div>
         </div>
@@ -241,6 +245,7 @@ function App() {
   const me = profile ?? { name: user.email ?? 'Faculty', email: user.email ?? '' };
   const leaderTab = activeTab === 'directorOverview' || activeTab === 'meetings';
   const where = leaderTab && !isLeader ? null : findTab(activeTab);
+  const teachingBlocked = nonTeaching && TEACHING_ONLY.has(activeTab);
   const pageTitle = where ? where.item.label : 'Home';
 
   return (
@@ -318,6 +323,14 @@ function App() {
             </div>
           )}
 
+          {teachingBlocked ? (
+            <div className="card" style={{ maxWidth: 560, margin: '3rem auto', padding: '1.8rem' }}>
+              <h2 style={{ fontSize: '1.2rem', margin: '0 0 0.5rem' }}>Teaching staff only</h2>
+              <p style={{ margin: 0, color: 'var(--ink-soft)' }}>
+                This page is for faculty who teach classes. Your account is set up as non-teaching staff. If you do teach, ask the admin to change it.
+              </p>
+            </div>
+          ) : (
           <Suspense fallback={<TabLoading />}>
             {(activeTab === 'home' || (leaderTab && !isLeader)) && <Home name={me.name} medicalWaiting={medicalWaiting} onOpen={openTab} isLeader={isLeader} />}
 
@@ -354,12 +367,6 @@ function App() {
             {activeTab === 'complaints' && (
               <div className="panel-enter" key="complaints">
                 <Complaints email={me.email} isAdmin={role === 'admin'} isLeader={isLeader} />
-              </div>
-            )}
-
-            {activeTab === 'reports' && (
-              <div className="panel-enter" key="reports">
-                <Reports />
               </div>
             )}
 
@@ -445,11 +452,30 @@ function App() {
               </div>
             )}
 
+            {activeTab === 'classChanges' && (
+              <div className="panel-enter" key="classChanges">
+                <ClassChanges />
+              </div>
+            )}
+
             {activeTab === 'holidays' && (
               <div className="panel-enter" key="holidays">
                 <ExamCellGate email={me.email} role={role} what="holidays">
                   <AddHoliday />
                 </ExamCellGate>
+              </div>
+            )}
+
+            {activeTab === 'placementStats' && (
+              <div className="panel-enter" key="placementStats">
+                {role === 'admin' ? (
+                  <PlacementStats />
+                ) : (
+                  <div className="card" style={{ maxWidth: 640, padding: '2rem', margin: '2rem auto' }}>
+                    <h1 style={{ fontSize: '1.3rem' }}>Placement numbers</h1>
+                    <p style={{ color: 'var(--ink-soft)' }}>Only admins can change these.</p>
+                  </div>
+                )}
               </div>
             )}
 
@@ -531,6 +557,7 @@ function App() {
               </div>
             )}
           </Suspense>
+          )}
         </div>
       </main>
     </div>

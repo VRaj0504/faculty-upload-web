@@ -36,6 +36,7 @@ export default function ResultUpload() {
   const [batch, setBatch] = useState('');
   const [branch, setBranch] = useState('');
   const [attempt, setAttempt] = useState<AttemptType>('supplementary');
+  const [subjectsFrom, setSubjectsFrom] = useState<'curriculum' | 'sheet'>('curriculum');
   const [rows, setRows] = useState<ParsedRow[] | null>(null);
   const [existing, setExisting] = useState<Map<string, GradeDoc>>(new Map());
   const [status, setStatus] = useState('');
@@ -120,17 +121,46 @@ export default function ResultUpload() {
       const regCol = header.findIndex((h) => /enrol|reg/i.test(h));
       const subjCol = header.findIndex((h) => /subject|course/i.test(h) && /code/i.test(h));
       const gradeCol = header.findIndex((h) => /^grade$/i.test(h));
+      const nameCol = header.findIndex((h) => /subject|course/i.test(h) && /name/i.test(h));
+      const creditCol = header.findIndex((h) => /^credits?$/i.test(h));
+      const semCol = header.findIndex((h) => /^sem(ester)?$/i.test(h));
+      const fromSheet = subjectsFrom === 'sheet';
+      if (fromSheet && (subjCol < 0 || gradeCol < 0 || nameCol < 0 || creditCol < 0 || semCol < 0)) {
+        return { error: 'To take subjects from the sheet it needs these columns: Enrollment No, Subject Code, Course Name, Credits, Semester, Grade.' };
+      }
+      const sheetSubjects = new Map<string, SubjectInfo>();
       const out: ParsedRow[] = [];
-      const push = (line: number, regRaw: unknown, codeRaw: unknown, gradeRaw: unknown) => {
+      const push = (line: number, regRaw: unknown, codeRaw: unknown, gradeRaw: unknown, row?: unknown[]) => {
         const regNo = norm(regRaw).toUpperCase();
         const code = normCode(codeRaw);
         const grade = norm(gradeRaw).toUpperCase();
         if (!regNo && !grade) return;
         if (!grade) return;
         const student = byReg.get(regNo) ?? null;
-        const subject = subjects.get(subjectKey(branch, code)) ?? null;
+        let subject: SubjectInfo | null = null;
+        let sheetErr: string | null = null;
+        if (fromSheet && row) {
+          const name = norm(row[nameCol]);
+          const credits = Number(row[creditCol]);
+          const semester = Number(row[semCol]);
+          if (!code || !name) sheetErr = 'Subject code or course name is blank';
+          else if (!Number.isFinite(credits) || credits <= 0 || credits > 10) sheetErr = `Credits "${norm(row[creditCol])}" isn't a number`;
+          else if (!Number.isInteger(semester) || semester < 1 || semester > 10) sheetErr = `Semester "${norm(row[semCol])}" isn't 1–10`;
+          else {
+            const prev = sheetSubjects.get(code);
+            if (prev && (prev.name !== name || prev.credits !== credits || prev.semester !== semester)) {
+              sheetErr = `${code} has a different name, credits or semester on another row`;
+            } else {
+              subject = prev ?? { branch, code, name, semester, credits };
+              sheetSubjects.set(code, subject);
+            }
+          }
+        } else {
+          subject = subjects.get(subjectKey(branch, code)) ?? null;
+        }
         let err: string | null = null;
         if (!student) err = `${regNo || '(blank)'} isn't in ${branch} ${batch}`;
+        else if (sheetErr) err = sheetErr;
         else if (!subject) err = `Unknown subject code "${code}" for ${branch}`;
         else if (!subject.credits) err = `No credits on file for ${code}. Add them in Curriculum.`;
         else if (!ALL_GRADES.includes(grade)) err = `Invalid grade "${grade}"`;
@@ -149,8 +179,9 @@ export default function ResultUpload() {
         });
       };
       if (subjCol >= 0 && gradeCol >= 0) {
-        sheet.slice(headerIdx + 1).forEach((row, i) => push(headerIdx + i + 2, row[regCol], row[subjCol], row[gradeCol]));
+        sheet.slice(headerIdx + 1).forEach((row, i) => push(headerIdx + i + 2, row[regCol], row[subjCol], row[gradeCol], row));
       } else {
+        if (fromSheet) return { error: 'To take subjects from the sheet it needs these columns: Enrollment No, Subject Code, Course Name, Credits, Semester, Grade.' };
         const subjectCols = header
           .map((h, i) => ({ i, code: normCode(h) }))
           .filter((c) => c.i !== regCol && subjects.has(subjectKey(branch, c.code)));
@@ -227,7 +258,15 @@ export default function ResultUpload() {
         <div className="att-row" style={{ marginTop: 0 }}>
           <div className="att-field">
             <label>Batch (admission year)</label>
-            <select value={batch} onChange={(e) => { setBatch(e.target.value); setBranch(''); setRows(null); }}>
+            <select
+              value={batch}
+              onChange={(e) => {
+                setBatch(e.target.value);
+                setBranch('');
+                setRows(null);
+                setSubjectsFrom(e.target.value && Number(e.target.value) <= 2024 ? 'sheet' : 'curriculum');
+              }}
+            >
               <option value="">Select…</option>
               {batches.map((y) => <option key={y} value={y}>{y}</option>)}
             </select>
@@ -237,6 +276,13 @@ export default function ResultUpload() {
             <select value={branch} disabled={!batch} onChange={(e) => { setBranch(e.target.value); setRows(null); }}>
               <option value="">Select…</option>
               {branches.map((b) => <option key={b} value={b}>{b}</option>)}
+            </select>
+          </div>
+          <div className="att-field">
+            <label>Subject names and credits</label>
+            <select value={subjectsFrom} onChange={(e) => { setSubjectsFrom(e.target.value as 'curriculum' | 'sheet'); setRows(null); }}>
+              <option value="curriculum">From the portal curriculum (2025 batch onwards)</option>
+              <option value="sheet">From this sheet (older curriculum)</option>
             </select>
           </div>
           <div className="att-field">
@@ -260,7 +306,10 @@ export default function ResultUpload() {
           />
         </div>
         <p className="res-hint">
-          Columns: Enrollment No, Subject Code, Grade. Or a wide sheet with one column per subject code. Grades: {ALL_GRADES.join(', ')}.
+          {subjectsFrom === 'sheet'
+            ? 'Columns: Enrollment No, Subject Code, Course Name, Credits, Semester, Grade. The course name and credits are saved with each grade, so older batches keep their own curriculum.'
+            : 'Columns: Enrollment No, Subject Code, Grade. Or a wide sheet with one column per subject code.'}{' '}
+          Grades: {ALL_GRADES.join(', ')}.
         </p>
         {error && <p className="error-text" style={{ marginTop: '0.8rem' }}>{error}</p>}
         {status && <p className="notice notice-ok" style={{ marginTop: '0.8rem' }}>{status}</p>}
@@ -290,7 +339,7 @@ export default function ResultUpload() {
                     <td>{r.line}</td>
                     <td>{r.regNo}</td>
                     <td>{r.student?.name ?? ''}</td>
-                    <td>{r.subject ? `${r.subject.code} · Sem ${r.subject.semester}` : r.code}</td>
+                    <td>{r.subject ? `${r.subject.code} · ${r.subject.name} · Sem ${r.subject.semester} · ${r.subject.credits} cr` : r.code}</td>
                     <td style={{ fontWeight: 700 }}>{r.grade}</td>
                     <td style={{ color: r.error ? '#B42318' : r.change === 'changed' ? '#9A4A0F' : 'var(--ink-soft)' }}>
                       {r.error ?? (r.change === 'new' ? 'New' : r.change === 'changed' ? `Changed from ${r.previous}` : 'Unchanged')}

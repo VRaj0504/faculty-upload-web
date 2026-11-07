@@ -1,4 +1,4 @@
-export const REG = /^(UG|PG)\d{2}[A-Z]{2,5}\d{2,4}$/i;
+export const REG = /^(UG|PG|UI)\d{2}[A-Z]{2,5}\d{2,4}$/i;
 const MARK = /^(\d{1,3}(\.\d{1,2})?|AB|A|ABS|ABSENT|-|NA)$/i;
 const MAXED = /^(.*?)\s*[([]\s*(\d{1,3})\s*(?:marks?)?\s*[)\]]\s*$/i;
 

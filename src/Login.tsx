@@ -224,7 +224,7 @@ function Login() {
           <img className="brand-logo" src="/logo.svg" alt="" />
           <div className="brand-text">
             <img className="brand-word" src="/wordmark-light.png" alt="CollegeGo" />
-            <span className="brand-sub">× IIIT Surat</span>
+            <span className="brand-sub">Faculty</span>
           </div>
         </div>
 
@@ -263,7 +263,7 @@ function Login() {
             <img className="brand-logo" src="/logo.svg" alt="" aria-hidden="true" />
             <div className="brand-text">
               <img className="brand-word" src="/wordmark.png" alt="CollegeGo" />
-              <span className="brand-sub">× IIIT Surat</span>
+              <span className="brand-sub">Faculty</span>
             </div>
           </div>
 

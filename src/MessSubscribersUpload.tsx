@@ -31,15 +31,26 @@ function matchHeaders(headerRow: string[]): { mapping: Partial<Record<keyof Subs
   return { mapping, missing };
 }
 
-function currentMonthKey(): string {
+function termKeyFor(d: Date): string {
+  return d.getMonth() + 1 >= 7 ? `${d.getFullYear()}-odd` : `${d.getFullYear()}-even`;
+}
+
+function termLabel(key: string): string {
+  const [y, half] = key.split('-');
+  return half === 'odd' ? `Odd semester · Jul–Dec ${y}` : `Even semester · Jan–Jun ${y}`;
+}
+
+function termOptions(): string[] {
   const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  const back = new Date(now.getFullYear(), now.getMonth() - 6, 1);
+  const next = new Date(now.getFullYear(), now.getMonth() + 6, 1);
+  return [termKeyFor(back), termKeyFor(now), termKeyFor(next)];
 }
 
 function MessSubscribersUpload() {
   const [status, setStatus] = useState('');
   const [uploading, setUploading] = useState(false);
-  const [month, setMonth] = useState(currentMonthKey());
+  const [term, setTerm] = useState(termKeyFor(new Date()));
   const [preview, setPreview] = useState<SubscriberRow[]>([]);
 
   const handleFile = async (file: File) => {
@@ -83,14 +94,14 @@ function MessSubscribersUpload() {
     }
 
     setPreview(parsedRows);
-    setStatus(`Parsed ${parsedRows.length} subscribers for ${month}. Review below, then click Upload.`);
+    setStatus(`Parsed ${parsedRows.length} subscribers for ${termLabel(term)}. Review below, then click Upload.`);
   };
 
   const handleUpload = async () => {
     if (preview.length === 0) return;
     if (
       !confirm(
-        `Mark ${preview.length} students as active Unlimited Thali subscribers for ${month}? This is the list students will be verified against at the canteen door.`,
+        `Mark ${preview.length} students as active Unlimited Thali subscribers for the ${termLabel(term)}? This is the list students will be verified against at the canteen door.`,
       )
     )
       return;
@@ -102,12 +113,12 @@ function MessSubscribersUpload() {
         const chunk = preview.slice(i, i + chunkSize);
         const batch = writeBatch(db);
         chunk.forEach((s) => {
-          const ref = doc(db, 'messSubscriptions', `${s.enrollmentNumber}_${month}`);
-          batch.set(ref, { enrollmentNumber: s.enrollmentNumber, name: s.name, month, active: true });
+          const ref = doc(db, 'messSubscriptions', `${s.enrollmentNumber}_${term}`);
+          batch.set(ref, { enrollmentNumber: s.enrollmentNumber, name: s.name, term, active: true });
         });
         await batch.commit();
       }
-      setStatus(`Uploaded ${preview.length} subscribers for ${month}.`);
+      setStatus(`Uploaded ${preview.length} subscribers for the ${termLabel(term)}.`);
       setPreview([]);
     } catch (err: any) {
       setStatus(`Upload failed: ${err.message}`);
@@ -120,13 +131,19 @@ function MessSubscribersUpload() {
     <div className="card" style={{ width: 640, padding: '2.5rem', margin: '3rem auto' }}>
       <h1 style={{ fontSize: '1.5rem' }}>Upload Thali Subscribers</h1>
       <p style={{ fontSize: '0.85rem', color: 'var(--ink-soft)' }}>
-        Upload the monthly list of students who paid for Unlimited Thali. Needs just Enrollment
+        Upload the semester list of students who paid for Unlimited Thali. Needs just Enrollment
         Number and Name columns — any reasonable header names work.
       </p>
 
       <div style={{ marginTop: '1.5rem' }}>
-        <label>Month this list is for</label>
-        <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} />
+        <label>Semester this list is for</label>
+        <select value={term} onChange={(e) => setTerm(e.target.value)}>
+          {termOptions().map((k) => (
+            <option key={k} value={k}>
+              {termLabel(k)}
+            </option>
+          ))}
+        </select>
       </div>
 
       <div style={{ marginTop: '1rem' }}>
@@ -159,7 +176,7 @@ function MessSubscribersUpload() {
           </div>
 
           <button onClick={handleUpload} disabled={uploading} style={{ width: '100%', marginTop: '1rem' }}>
-            {uploading ? 'Uploading...' : `Upload ${preview.length} Subscribers for ${month}`}
+            {uploading ? 'Uploading...' : `Upload ${preview.length} subscribers for ${termLabel(term)}`}
           </button>
         </>
       )}

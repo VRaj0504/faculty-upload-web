@@ -1,5 +1,5 @@
 export const LETTER_GRADES = ["AA", "AB", "BB", "BC", "CC", "CD", "DD", "FF"] as const;
-export const SPECIAL_GRADES = ["II", "NA", "XX", "WW", "SS", "ZZ"] as const;
+export const SPECIAL_GRADES = ["II", "NA", "XX", "WW", "SS", "ZZ", "MPC"] as const;
 export const ALL_GRADES: string[] = [...LETTER_GRADES, ...SPECIAL_GRADES];
 
 export const GRADE_POINTS: Record<string, number> = {
@@ -28,7 +28,18 @@ export const GRADE_LABELS: Record<string, string> = {
   WW: "Withdrawn",
   SS: "Satisfactory",
   ZZ: "Not completed",
+  MPC: "Malpractice case (result withheld)",
 };
+
+export const ZERO_POINT_GRADES = ["FF", "NA", "XX", "II", "MPC"];
+
+export function countsInGpa(grade: string): boolean {
+  return grade in GRADE_POINTS || ZERO_POINT_GRADES.includes(grade);
+}
+
+export function pointsOf(grade: string): number {
+  return GRADE_POINTS[grade] ?? 0;
+}
 
 export const ATTEMPT_TYPES = ["regular", "supplementary", "repeat"] as const;
 export type AttemptType = (typeof ATTEMPT_TYPES)[number];
@@ -117,7 +128,7 @@ export function earnsCredits(grade: string): boolean {
 export function backlogKind(grade: string): BacklogKind | null {
   if (grade === "FF" || grade === "NA") return "supplementary";
   if (grade === "XX" || grade === "WW" || grade === "ZZ") return "repeat";
-  if (grade === "II") return "pending";
+  if (grade === "II" || grade === "MPC") return "pending";
   return null;
 }
 
@@ -135,6 +146,8 @@ export function backlogAction(grade: string): string {
       return "Redo the training until you get SS (Rule 7.12).";
     case "II":
       return "Complete the pending work. II is converted to a regular grade (Rule 6.4).";
+    case "MPC":
+      return "The result is withheld while a malpractice case is decided. It counts as 0 until the final grade is given.";
     default:
       return "";
   }
@@ -170,9 +183,9 @@ export function summariseSemesters(results: ResultInput[]): SemesterSummary[] {
   }
   return Array.from(bySem.entries())
     .map(([semester, list]) => {
-      const graded = list.filter((r) => r.grade in GRADE_POINTS);
+      const graded = list.filter((r) => countsInGpa(r.grade));
       const gradedCredits = graded.reduce((s, r) => s + r.credits, 0);
-      const points = graded.reduce((s, r) => s + r.credits * GRADE_POINTS[r.grade], 0);
+      const points = graded.reduce((s, r) => s + r.credits * pointsOf(r.grade), 0);
       return {
         semester,
         sgpa: gradedCredits > 0 ? round2(points / gradedCredits) : null,
@@ -185,10 +198,10 @@ export function summariseSemesters(results: ResultInput[]): SemesterSummary[] {
 }
 
 export function computeCgpa(results: ResultInput[]): number | null {
-  const passed = results.filter((r) => earnsCredits(r.grade));
-  const credits = passed.reduce((s, r) => s + r.credits, 0);
+  const counted = results.filter((r) => countsInGpa(r.grade));
+  const credits = counted.reduce((s, r) => s + r.credits, 0);
   if (credits <= 0) return null;
-  const points = passed.reduce((s, r) => s + r.credits * GRADE_POINTS[r.grade], 0);
+  const points = counted.reduce((s, r) => s + r.credits * pointsOf(r.grade), 0);
   return round2(points / credits);
 }
 

@@ -5,6 +5,8 @@ import { EXAM_TYPES, examDocId, sortEntries, validateEntries } from './examSheet
 import type { ExamGroup, ExamTypeId } from './examSheetParser';
 import { uploadExamSheetPdf } from './examPdf';
 import ExamEditor from './ExamEditor';
+import ExamTakers, { cleanTakers, needsTakers } from './ExamTakers';
+import type { Takers } from './ExamTakers';
 
 function ExamSheetReview({
   initialGroups,
@@ -22,6 +24,7 @@ function ExamSheetReview({
   const [groups, setGroups] = useState<ExamGroup[]>(initialGroups);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState('');
+  const [takers, setTakers] = useState<Record<number, Takers>>({});
 
   const patchGroup = (gi: number, patch: Partial<ExamGroup>) =>
     setGroups((prev) => prev.map((g, i) => (i === gi ? { ...g, ...patch } : g)));
@@ -66,6 +69,7 @@ function ExamSheetReview({
       let done = 0;
       for (let i = 0; i < groups.length; i++) {
         const g = groups[i];
+        const who = needsTakers(g.examType) ? cleanTakers(takers[i] ?? {}) : { takers: {}, students: [] };
         await setDoc(doc(db, 'examSchedules', ids[i]), {
           branch: g.branch,
           semester: g.semester,
@@ -79,6 +83,8 @@ function ExamSheetReview({
             subjectName: e.subjectName.trim(),
             venue: e.venue.trim(),
           })),
+          takers: who.takers,
+          students: who.students,
           ...(pdf ? { sourcePdfUrl: pdf.url, sourcePdfName: pdf.name } : {}),
           updatedAt: serverTimestamp(),
           updatedBy: auth.currentUser?.uid ?? 'web-portal',
@@ -130,7 +136,18 @@ function ExamSheetReview({
             <span style={{ fontSize: '0.8rem', color: 'var(--ink-soft)' }}>{g.entries.length} exams</span>
             <button
               type="button"
-              onClick={() => setGroups((prev) => prev.filter((_, i) => i !== gi))}
+              onClick={() => {
+                setGroups((prev) => prev.filter((_, i) => i !== gi));
+                setTakers((prev) => {
+                  const next: Record<number, Takers> = {};
+                  for (const [k, v] of Object.entries(prev)) {
+                    const n = Number(k);
+                    if (n < gi) next[n] = v;
+                    else if (n > gi) next[n - 1] = v;
+                  }
+                  return next;
+                });
+              }}
               style={{ marginLeft: 'auto' }}
             >
               Remove sheet
@@ -142,6 +159,13 @@ function ExamSheetReview({
             examType={g.examType}
             entries={g.entries}
             onChange={(entries) => patchGroup(gi, { entries })}
+          />
+          <ExamTakers
+            key={`${gi}-${groups.length}`}
+            examType={g.examType}
+            entries={g.entries}
+            value={takers[gi] ?? {}}
+            onChange={(t) => setTakers((prev) => ({ ...prev, [gi]: t }))}
           />
         </div>
       ))}

@@ -7,7 +7,9 @@ export type CurriculumSubject = {
 
 export type BranchCurriculum = Record<number, CurriculumSubject[]>;
 
-export const curriculum: Record<'CSE' | 'ECE' | 'MNC', BranchCurriculum> = {
+type BranchKey = 'CSE' | 'ECE' | 'MNC';
+
+export const newCurriculum: Record<BranchKey, BranchCurriculum> = {
   CSE: {
     1: [
       { code: 'CS101', name: 'Fundamentals of Computer & C Programming' },
@@ -182,6 +184,74 @@ export const curriculum: Record<'CSE' | 'ECE' | 'MNC', BranchCurriculum> = {
   },
 };
 
-export function subjectsFor(branch: string, semester: number): CurriculumSubject[] {
-  return curriculum[String(branch).toUpperCase() as keyof typeof curriculum]?.[semester] ?? [];
+const SEM5_2024_COMMON: CurriculumSubject[] = [
+  { code: 'CS504', name: 'Cloud Computing & Big Data Infrastructure' },
+  { code: 'HM505', name: 'Innovation & Entrepreneurship' },
+  { code: 'CS514', name: 'Fuzzy & Neural Networks' },
+  { code: 'EC513', name: 'Hardware Description Languages' },
+];
+
+const SEM7_2023_COMMON: CurriculumSubject[] = [
+  { code: 'CS701', name: 'Artificial Intelligence' },
+  { code: 'CS743', name: 'Deep Learning' },
+  { code: 'CS742', name: 'Cyber Security' },
+  { code: 'EC761', name: 'Internet of Things' },
+  { code: 'CS753', name: 'Computer Ethics & Public Policy' },
+];
+
+export const legacyCurriculum: Record<number, Partial<Record<BranchKey, BranchCurriculum>>> = {
+  2024: {
+    CSE: {
+      5: [
+        { code: 'CS501', name: 'Data Science' },
+        { code: 'CS502', name: 'Computer Graphics' },
+        { code: 'CS503', name: 'High Performance Computing' },
+        ...SEM5_2024_COMMON,
+      ],
+    },
+    ECE: {
+      5: [
+        { code: 'EC501', name: 'Wireless Communication' },
+        { code: 'EC502', name: 'Nanoscale Device Engineering' },
+        { code: 'EC503', name: 'Image Processing & Computer Vision' },
+        ...SEM5_2024_COMMON,
+      ],
+    },
+  },
+  2023: {
+    CSE: {
+      7: [...SEM7_2023_COMMON.slice(0, 3), { code: 'CS702', name: 'Natural Language Processing' }, ...SEM7_2023_COMMON.slice(3)],
+    },
+    ECE: {
+      7: [...SEM7_2023_COMMON.slice(0, 3), { code: 'EC702', name: 'Electric Vehicle Technology' }, ...SEM7_2023_COMMON.slice(3)],
+    },
+  },
+};
+
+export function batchInSemester(semester: number, today: Date = new Date()): number {
+  const odd = today.getMonth() >= 6;
+  const step = Math.floor((semester - 1) / 2);
+  return odd ? today.getFullYear() - step : today.getFullYear() - 1 - step;
+}
+
+const keyOf = (branch: string) => String(branch).toUpperCase() as BranchKey;
+
+export function curriculumFor(branch: string, semester: number, admissionYear: number): CurriculumSubject[] {
+  const b = keyOf(branch);
+  return legacyCurriculum[admissionYear]?.[b]?.[semester] ?? newCurriculum[b]?.[semester] ?? [];
+}
+
+function current(): Record<BranchKey, BranchCurriculum> {
+  const out = {} as Record<BranchKey, BranchCurriculum>;
+  for (const b of Object.keys(newCurriculum) as BranchKey[]) {
+    out[b] = {};
+    for (const sem of Object.keys(newCurriculum[b]).map(Number)) out[b][sem] = curriculumFor(b, sem, batchInSemester(sem));
+  }
+  return out;
+}
+
+export const curriculum: Record<BranchKey, BranchCurriculum> = current();
+
+export function subjectsFor(branch: string, semester: number, admissionYear?: number): CurriculumSubject[] {
+  return curriculumFor(branch, semester, admissionYear ?? batchInSemester(semester));
 }

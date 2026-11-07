@@ -144,7 +144,7 @@ export function examWholeCollegeTemplate() {
         [...WHOLE_COLLEGE_HEADERS],
         ['CSE', 3, 'Mid Semester', '21/09/2026', '09:00', '10:30', 'CS301', 'Computer Organization and Architecture', 'LT 1'],
         ['ECE', 3, 'Mid Semester', '21/09/2026', '09:00', '10:30', 'CS301', 'Computer Organization and Architecture', 'LT 2'],
-        ['CSE', 3, 'Mid Semester (Repeaters)', '05/10/2026', '09:00', '10:30', 'CS301', 'Operating System', ''],
+        ['CSE', 3, 'Make-up (Mid Sem)', '05/10/2026', '09:00', '10:30', 'CS301', 'Operating System', ''],
       ],
       widths: [9, 10, 26, 14, 12, 12, 14, 44, 12],
       textCols: [3, 4, 5],

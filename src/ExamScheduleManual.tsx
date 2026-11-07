@@ -14,6 +14,8 @@ import {
 import type { ExamEntry, ExamTypeId } from './examSheetParser';
 import { uploadExamSheetPdf } from './examPdf';
 import ExamEditor from './ExamEditor';
+import ExamTakers, { cleanTakers, needsTakers } from './ExamTakers';
+import type { Takers } from './ExamTakers';
 import { DEFAULT_GUIDELINES } from './examVenues';
 import { examClassTemplate, readSheetRows } from './xlsxTemplates';
 
@@ -33,12 +35,16 @@ function ExamScheduleManual() {
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState('');
   const [guidelines, setGuidelines] = useState(DEFAULT_GUIDELINES.join('\n'));
+  const [takers, setTakers] = useState<Takers>({});
+  const [takersKey, setTakersKey] = useState(0);
 
   const ready = !!branch && !!semester && !!examType;
   const examLabel = EXAM_TYPES.find((t) => t.id === examType)?.label ?? '';
 
   useEffect(() => {
     setAttachFile(null);
+    setTakers({});
+    setTakersKey((k) => k + 1);
     if (!ready) {
       setEntries([]);
       setExisting(false);
@@ -64,6 +70,8 @@ function ExamScheduleManual() {
         if (snap.exists()) {
           const data = snap.data();
           setEntries((data.entries ?? []) as ExamEntry[]);
+          setTakers((data.takers ?? {}) as Takers);
+          setTakersKey((k) => k + 1);
           if (Array.isArray(data.guidelines)) setGuidelines((data.guidelines as string[]).join('\n'));
           setSourcePdf(data.sourcePdfUrl ? { url: data.sourcePdfUrl, name: data.sourcePdfName ?? 'Official date sheet' } : null);
           setExisting(true);
@@ -141,6 +149,7 @@ function ExamScheduleManual() {
         venue: e.venue.trim(),
       }));
 
+      const who = needsTakers(examType) ? cleanTakers(takers) : { takers: {}, students: [] };
       for (const b of targetBranches) {
         await setDoc(doc(db, 'examSchedules', examDocId(b, Number(semester), examType)), {
             branch: b,
@@ -148,6 +157,8 @@ function ExamScheduleManual() {
             examType,
             examTypeLabel: examLabel,
             entries: cleanEntries,
+            takers: who.takers,
+            students: who.students,
             guidelines: guidelines.split('\n').map((l) => l.trim()).filter(Boolean),
             ...(pdf ? { sourcePdfUrl: pdf.url, sourcePdfName: pdf.name } : {}),
             updatedAt: serverTimestamp(),
@@ -280,6 +291,8 @@ function ExamScheduleManual() {
             problemRows={problemRows}
             onRowEdited={(n) => setProblemRows((prev) => prev.filter((r) => r !== n))}
           />
+
+          <ExamTakers key={takersKey} examType={examType} entries={entries} value={takers} onChange={setTakers} />
 
           <div style={{ marginTop: '1rem' }}>
             <label>Guidelines shown to students (one per line)</label>

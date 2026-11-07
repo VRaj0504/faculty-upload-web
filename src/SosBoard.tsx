@@ -1,10 +1,75 @@
 import { useEffect, useState } from 'react';
-import { doc, getDoc, serverTimestamp, updateDoc } from 'firebase/firestore';
+import { Timestamp, collection, doc, getDoc, onSnapshot, query, serverTimestamp, updateDoc, where } from 'firebase/firestore';
 import { auth, db } from './firebaseConfig';
 import { Icon } from './icons';
 import type { SosAlert } from './useActiveSos';
 
 const TYPE: Record<string, string> = { medical: 'Medical', safety: 'Safety', other: 'Emergency' };
+
+function dur(ms: number) {
+  const m = Math.max(1, Math.round(ms / 60000));
+  return m < 60 ? `${m} min` : `${Math.floor(m / 60)} hr ${m % 60} min`;
+}
+
+type Closed = SosAlert & { resolvedBy?: { name: string; email: string; at: number } | null };
+
+function SosHistory() {
+  const [rows, setRows] = useState<Closed[] | null>(null);
+  useEffect(() => {
+    const q = query(collection(db, 'sosAlerts'), where('createdAt', '>=', Timestamp.fromMillis(Date.now() - 30 * 86400000)));
+    return onSnapshot(
+      q,
+      (snap) => {
+        const list = snap.docs
+          .map((d) => ({ id: d.id, ...(d.data() as Omit<Closed, 'id'>) }))
+          .filter((a) => a.status === 'resolved' || a.status === 'cancelled');
+        list.sort((a, b) => (b.createdAt?.toMillis?.() ?? 0) - (a.createdAt?.toMillis?.() ?? 0));
+        setRows(list);
+      },
+      () => setRows([]),
+    );
+  }, []);
+  if (!rows || rows.length === 0) return null;
+  return (
+    <div className="card" style={{ marginTop: '1.5rem' }}>
+      <h2 style={{ fontSize: '1.05rem', marginTop: 0 }}>Closed in the last 30 days</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>When</th>
+            <th>Student</th>
+            <th>Type</th>
+            <th>First response</th>
+            <th>Closed</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((a) => {
+            const start = a.createdAt?.toMillis?.() ?? null;
+            return (
+              <tr key={a.id}>
+                <td>{start ? new Date(start).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }) : '—'}</td>
+                <td>
+                  {a.studentName}
+                  {a.enrollmentNumber ? ` · ${a.enrollmentNumber}` : ''}
+                </td>
+                <td>{TYPE[a.type] ?? 'Emergency'}</td>
+                <td>{a.ackBy && start ? `${a.ackBy.name} in ${dur(a.ackBy.at - start)}` : '—'}</td>
+                <td>
+                  {a.status === 'cancelled'
+                    ? 'Student marked safe'
+                    : a.resolvedBy && start
+                      ? `${a.resolvedBy.name} after ${dur(a.resolvedBy.at - start)}`
+                      : 'Resolved'}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
 
 function ago(ms: number) {
   const m = Math.max(0, Math.round((Date.now() - ms) / 60000));
@@ -143,6 +208,7 @@ export default function SosBoard({
           })}
         </div>
       )}
+      <SosHistory />
     </div>
   );
 }

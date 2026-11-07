@@ -8,7 +8,7 @@ function Header({ user }: { user: User | null }) {
         <img className="brand-logo" src="/logo.svg" alt="" aria-hidden="true" />
         <div className="app-header-brand-text">
           <img className="brand-word" src="/wordmark.png" alt="CollegeGo" />
-          <span className="app-header-tagline">× IIIT Surat</span>
+          <span className="app-header-tagline">Faculty</span>
         </div>
       </div>
       {user && (
