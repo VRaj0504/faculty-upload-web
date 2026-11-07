@@ -5,7 +5,10 @@ import { db } from './firebaseConfig';
 type Person = { name: string; email: string };
 type Cfg = { dsw?: Person; dean?: Person; fic?: Record<string, Person> };
 type Club = { id: string; name: string; parentClubId?: string | null };
-type Faculty = { name: string; email: string };
+type Faculty = { name: string; email: string; signedIn: boolean };
+
+const DEFAULT_DSW = { name: 'Dr. Sudeep Sharma', email: 'sudeep.sharma@iiitsurat.ac.in' };
+const DEFAULT_DEAN = { name: 'Dr. Kaustubh Dhondge', email: 'kaustubh.dhondge@iiitsurat.ac.in' };
 
 /** Who signs event excusals: each parent club's FIC, then the Dean of Student Welfare, then the Dean of Academics. */
 export default function EventExcusalSetup() {
@@ -18,20 +21,38 @@ export default function EventExcusalSetup() {
   useEffect(() => {
     Promise.all([
       getDocs(query(collection(db, 'users'), where('role', '==', 'faculty'))),
+      getDocs(query(collection(db, 'allowlist'), where('role', '==', 'faculty'))),
       getDocs(collection(db, 'clubs')),
       getDoc(doc(db, 'config', 'eventExcusal')),
     ])
-      .then(([f, c, x]) => {
-        setFaculty(
-          f.docs
-            .map((d) => d.data() as { name?: string; email?: string })
-            .filter((u) => u.email)
-            .map((u) => ({ name: u.name ?? u.email!, email: u.email!.toLowerCase() }))
-            .sort((a, b) => a.name.localeCompare(b.name)),
-        );
+      .then(([u, a, c, x]) => {
+        // Everyone on the approved faculty list, not just those who have signed in to CollegeGo yet.
+        const byEmail = new Map<string, Faculty>();
+        a.docs.forEach((d) => {
+          const v = d.data() as { name?: string };
+          const email = d.id.toLowerCase();
+          byEmail.set(email, { name: v.name ?? email, email, signedIn: false });
+        });
+        u.docs.forEach((d) => {
+          const v = d.data() as { name?: string; email?: string };
+          if (!v.email) return;
+          const email = v.email.toLowerCase();
+          byEmail.set(email, { name: v.name ?? byEmail.get(email)?.name ?? email, email, signedIn: true });
+        });
+        const list = Array.from(byEmail.values()).sort((p, q) => p.name.localeCompare(q.name));
+        setFaculty(list);
         setClubs(c.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<Club, 'id'>) })));
-        setCfg((x.data() as Cfg) ?? {});
-        setStatus('');
+        const saved = (x.data() as Cfg) ?? {};
+        // Usual signers, filled in if nothing is saved yet: Sudeep sir (DSW) and Kaustubh sir (Dean, Academics).
+        const known = (email: string, name: string) => list.find((f) => f.email === email) ?? { name, email, signedIn: false };
+        const dswGuess = !saved.dsw?.email ? known(DEFAULT_DSW.email, DEFAULT_DSW.name) : undefined;
+        const deanGuess = !saved.dean?.email ? known(DEFAULT_DEAN.email, DEFAULT_DEAN.name) : undefined;
+        setCfg({
+          ...saved,
+          ...(dswGuess ? { dsw: { name: dswGuess.name, email: dswGuess.email } } : {}),
+          ...(deanGuess ? { dean: { name: deanGuess.name, email: deanGuess.email } } : {}),
+        });
+        setStatus(dswGuess || deanGuess ? 'Filled in Sudeep sir and Kaustubh sir as the deans. Check and press Save.' : '');
       })
       .catch((e) => setStatus(`Couldn't load: ${e.message}`));
   }, []);
@@ -51,6 +72,7 @@ export default function EventExcusalSetup() {
       {faculty.map((f) => (
         <option key={f.email} value={f.email}>
           {f.name} · {f.email}
+          {f.signedIn ? '' : ' (not signed in yet)'}
         </option>
       ))}
     </select>
@@ -81,6 +103,9 @@ export default function EventExcusalSetup() {
       <p style={{ color: 'var(--ink-soft)' }}>
         A club lead sends the student list. It is signed in this order: the parent club's faculty in-charge → Dean, Student Welfare → Dean,
         Academics. When the last one signs, those students' classes count as attended (shown as <b>EV</b> in the register).
+      </p>
+      <p className="res-hint">
+        Anyone marked “not signed in yet” gets the request once they sign in to the CollegeGo app or web with that email.
       </p>
       {status && <p className="res-hint">{status}</p>}
 
