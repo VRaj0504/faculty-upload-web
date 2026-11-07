@@ -586,7 +586,7 @@ export function planRegister(
 }
 
 export type ExportSubject = { code: string; name: string; sessions: SessionDoc[] };
-export type ExcusalRange = { fromDate: string; toDate: string; eventName?: string; sessions?: string[] };
+export type ExcusalRange = { fromDate: string; toDate: string; eventName?: string; sessions?: string[]; kind?: 'event' | 'medical' };
 
 export function excusalCovers(r: ExcusalRange, date: string, code?: string): boolean {
   if (date < r.fromDate || date > r.toDate) return false;
@@ -619,9 +619,14 @@ export function studentRecord(
     classes++;
     const absent = d.absentEnrollmentNumbers.includes(s.regNo);
     const excused = d.excusedEnrollmentNumbers?.includes(s.regNo);
-    if (excused || (absent && excusals.some((r) => excusalCovers(r, d.date, d.subjectCode)))) {
+    if (excused) {
       attended += w;
       return 'OD';
+    }
+    const cover = absent ? excusals.find((r) => excusalCovers(r, d.date, d.subjectCode)) : undefined;
+    if (cover) {
+      attended += w;
+      return cover.kind === 'medical' ? 'ML' : 'EV';
     }
     if (absent) return 'A';
     attended += w;

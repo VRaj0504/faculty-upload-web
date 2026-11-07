@@ -1454,7 +1454,11 @@ table { border-color: var(--line); }
 .att-grid .g-cell.on { background-image: linear-gradient(var(--accent-soft), var(--accent-soft)); }
 .att-grid .m-P { color: var(--success); }
 .att-grid .m-A { color: #fff; background-color: var(--danger); }
-.att-grid .m-OD { color: var(--tone-lilac-fg); background-color: var(--tone-lilac-bg); }
+.att-grid .m-OD, .att-legend .m-OD { color: var(--tone-lilac-fg); background-color: var(--tone-lilac-bg); }
+.att-grid .m-EV, .att-legend .m-EV { color: #fff; background-color: #7C3AED; font-weight: 800; }
+.att-grid .m-ML, .att-legend .m-ML { color: #fff; background-color: #0E7490; font-weight: 800; }
+.att-legend { display: block; margin-top: 0.4rem; }
+.att-legend b { display: inline-block; padding: 0 0.35rem; border-radius: 4px; font-size: 0.75rem; }
 .att-grid .m-NA { color: var(--ink-faint); font-weight: 500; }
 .att-grid .g-cell.edited::after { content: ''; position: absolute; top: 3px; right: 3px; width: 5px; height: 5px; border-radius: 50%; background: var(--orange); }
 .att-grid .g-cell i { position: absolute; bottom: 1px; right: 3px; font-style: normal; color: #fff; font-size: 0.7rem; }

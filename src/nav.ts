@@ -28,6 +28,7 @@ export type Tab =
   | 'messSubscribers'
   | 'placementStats'
   | 'classChanges'
+  | 'excusalSetup'
   | 'inboxImports'
   | 'directorOverview'
   | 'meetings';
@@ -201,6 +202,7 @@ export const NAV: NavGroup[] = [
       { tab: 'curriculum', label: 'Curriculum', hint: 'Subjects per semester', icon: 'book' },
       { tab: 'messSubscribers', label: 'Mess', hint: 'Prices & thali subscribers', icon: 'thali' },
       { tab: 'placementStats', label: 'Placements', hint: 'Numbers on the app page', icon: 'chart' },
+      { tab: 'excusalSetup', label: 'Event excusal', hint: 'FIC and deans who sign', icon: 'check' },
       { tab: 'inboxImports', label: 'Inbox imports', hint: 'From email', icon: 'inbox' },
     ],
     prefetch: () => {
@@ -208,6 +210,7 @@ export const NAV: NavGroup[] = [
       import('./CurriculumBrowser');
       import('./MessSubscribersUpload');
       import('./PlacementStats');
+      import('./EventExcusalSetup');
       import('./InboxImports');
     },
   },

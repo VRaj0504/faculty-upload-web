@@ -33,6 +33,7 @@ const AddHoliday = lazyRetry(() => import('./AddHoliday'));
 const MessSubscribersUpload = lazyRetry(() => import('./MessSubscribersUpload'));
 const PlacementStats = lazyRetry(() => import('./PlacementStats'));
 const ClassChanges = lazyRetry(() => import('./ClassChanges'));
+const EventExcusalSetup = lazyRetry(() => import('./EventExcusalSetup'));
 const MessAlwaysAvailable = lazyRetry(() => import('./MessAlwaysAvailable'));
 const AttendanceUpload = lazyRetry(() => import('./AttendanceUpload'));
 const AssignGrades = lazyRetry(() => import('./AssignGrades'));
@@ -463,6 +464,19 @@ function App() {
                 <ExamCellGate email={me.email} role={role} what="holidays">
                   <AddHoliday />
                 </ExamCellGate>
+              </div>
+            )}
+
+            {activeTab === 'excusalSetup' && (
+              <div className="panel-enter" key="excusalSetup">
+                {role === 'admin' ? (
+                  <EventExcusalSetup />
+                ) : (
+                  <div className="card" style={{ maxWidth: 640, padding: '2rem', margin: '2rem auto' }}>
+                    <h1 style={{ fontSize: '1.3rem' }}>Event excusal signers</h1>
+                    <p style={{ color: 'var(--ink-soft)' }}>Only admins can change these.</p>
+                  </div>
+                )}
               </div>
             )}
 

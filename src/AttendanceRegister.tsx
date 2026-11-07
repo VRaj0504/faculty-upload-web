@@ -25,6 +25,7 @@ const NEXT: Record<Mark, Mark> = { P: 'A', A: 'NA', OD: 'P', NA: 'P' };
 const colKey = (date: string, lecture: number) => `${date}#${lecture}`;
 const inRange = (d: string, from: string, to: string) => (!from || d >= from) && (!to || d <= to);
 const excusedOn = (date: string, ranges?: ExcusalRange[], code?: string) => !!ranges?.some((r) => excusalCovers(r, date, code));
+const coverOn = (date: string, ranges?: ExcusalRange[], code?: string) => ranges?.find((r) => excusalCovers(r, date, code));
 
 function baseMark(s: RosterEntry, col: Col): Mark {
   const d = col.docs.get(s.branch);
@@ -426,6 +427,9 @@ export default function AttendanceRegister() {
               </div>
               <p className="res-hint">
                 Click a cell to cycle P → A → — (not in this class, e.g. the other lab batch). Click a date to see that day and delete it. “—” means not this student’s class.
+                <span className="att-legend">
+                  <b className="g-cell m-EV">EV</b> approved event · <b className="g-cell m-ML">ML</b> medical leave · <b className="g-cell m-OD">OD</b> on duty — all count as attended
+                </span>
                 To fix many marks at once: Download, edit in Excel, then Upload — it updates these same classes.
               </p>
 
@@ -465,16 +469,22 @@ export default function AttendanceRegister() {
                             {shownCols.map((c) => {
                               const m = markOf(s, c);
                               const edited = edits.get(c.key)?.has(s.regNo);
-                              const exc = m === 'A' && excusedOn(c.date, excusals.get(s.regNo), ctx?.subject?.code);
+                              const cover = m === 'A' ? coverOn(c.date, excusals.get(s.regNo), ctx?.subject?.code) : undefined;
+                              const shown = cover ? (cover.kind === 'medical' ? 'ML' : 'EV') : m;
                               return (
                                 <td
                                   key={c.key}
-                                  className={`g-cell m-${m} ${edited ? 'edited' : ''} ${openCol === c.key ? 'on' : ''}`}
+                                  className={`g-cell m-${shown} ${edited ? 'edited' : ''} ${openCol === c.key ? 'on' : ''}`}
                                   onClick={() => setCell(s, c, NEXT[m])}
-                                  title={exc ? 'Absent, but excused for an approved event — counts as attended' : m === 'NA' ? 'Not this student’s class — click to include' : ''}
+                                  title={
+                                    cover
+                                      ? `${cover.kind === 'medical' ? 'Medical leave' : `Event: ${cover.eventName ?? 'approved excusal'}`} — counts as attended`
+                                      : m === 'NA'
+                                        ? 'Not this student’s class — click to include'
+                                        : ''
+                                  }
                                 >
-                                  {m === 'NA' ? '—' : m}
-                                  {exc && <i>•</i>}
+                                  {m === 'NA' ? '—' : shown}
                                 </td>
                               );
                             })}

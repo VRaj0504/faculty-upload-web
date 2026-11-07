@@ -180,10 +180,22 @@ export async function loadApprovedExcusals(regNos: Set<string>): Promise<{ map: 
     );
     const seen = new Set<string>();
     parts.flatMap((p) => p.docs).filter((d) => !seen.has(d.id) && seen.add(d.id)).forEach((d) => {
-      const x = d.data() as { studentEnrollmentNumbers?: string[]; fromDate: string; toDate: string; eventName?: string };
+      const x = d.data() as {
+        studentEnrollmentNumbers?: string[]; fromDate: string; toDate: string; eventName?: string;
+        flow?: number; fullDay?: boolean; students?: { regNo: string; classKey: string | null }[]; sessionsByClass?: Record<string, string[]> | null;
+      };
+      const timed = x.flow === 2 && x.fullDay === false;
       for (const r of x.studentEnrollmentNumbers ?? []) {
         if (!regNos.has(r)) continue;
-        add(r, { fromDate: x.fromDate, toDate: x.toDate, eventName: x.eventName });
+        // A timed excusal only covers the classes inside its time window, worked out when it was sent.
+        const key = timed ? x.students?.find((s) => s.regNo === r)?.classKey : null;
+        add(r, {
+          fromDate: x.fromDate,
+          toDate: x.toDate,
+          eventName: x.eventName,
+          kind: 'event',
+          ...(timed ? { sessions: (key && x.sessionsByClass?.[key]) || [] } : {}),
+        });
       }
     });
   } catch {
@@ -201,6 +213,7 @@ export async function loadApprovedExcusals(regNos: Set<string>): Promise<{ map: 
         fromDate: x.fromDate,
         toDate: x.toDate,
         eventName: 'Medical leave',
+        kind: 'medical',
         ...(x.allDates ? {} : { sessions: x.sessions ?? [] }),
       });
     });
