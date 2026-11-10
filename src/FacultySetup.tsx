@@ -4,6 +4,7 @@ import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { auth, db } from './firebaseConfig';
 import { SUPPORT } from './support';
 import BrandLoader from './BrandLoader';
+import { COLLEGE_EMAIL_DOMAIN } from './college';
 
 type Props = { user: User; step: 'verify' | 'create'; onReady: (name: string) => void };
 
@@ -47,7 +48,7 @@ export default function FacultySetup({ user, step, onReady }: Props) {
           /offline|network|unavailable/i.test(msg)
             ? 'No internet connection. Check your connection and reload the page.'
             : /permission/i.test(msg)
-              ? 'Your account could not be set up. Make sure you signed in with your @iiitsurat.ac.in email and that it is verified.'
+              ? `Your account could not be set up. Make sure you signed in with your ${COLLEGE_EMAIL_DOMAIN} email and that it is verified.`
               : 'Something went wrong while setting up your account. Reload the page to try again.',
         );
       }

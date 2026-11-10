@@ -13,6 +13,7 @@ import {
 import { auth, functions } from './firebaseConfig';
 import { httpsCallable } from 'firebase/functions';
 import { Icon, type IconName } from './icons';
+import { COLLEGE_EMAIL_DOMAIN } from './college';
 
 const PREVIEW: { title: string; sub: string; icon: IconName; bg: string; fg: string }[] = [
   { title: 'Resources', sub: 'Notes, papers & slides', icon: 'upload', bg: 'var(--tone-blue-bg)', fg: 'var(--tone-blue-fg)' },
@@ -54,7 +55,7 @@ function LoginBg({ tone }: { tone: 'dark' | 'light' }) {
   );
 }
 
-const DOMAIN = '@iiitsurat.ac.in';
+const DOMAIN = COLLEGE_EMAIL_DOMAIN;
 const isInstitute = (e: string) => e.trim().toLowerCase().endsWith(DOMAIN);
 
 function friendly(code: string): string {
@@ -141,7 +142,7 @@ function Login() {
     setGoogleBusy(true);
     try {
       const provider = new GoogleAuthProvider();
-      provider.setCustomParameters({ hd: 'iiitsurat.ac.in', prompt: 'select_account' });
+      provider.setCustomParameters({ hd: DOMAIN.slice(1), prompt: 'select_account' });
       const res = await signInWithPopup(auth, provider);
       const got = (res.user.email ?? '').toLowerCase();
       if (!isInstitute(got)) {
@@ -289,7 +290,7 @@ function Login() {
             <label htmlFor="signup-name">Full name</label>
             <input id="signup-name" autoComplete="name" placeholder="Dr. Firstname Lastname" value={name} onChange={(e) => setName(e.target.value)} required />
             <label htmlFor="signup-email" style={{ marginTop: '1rem' }}>Institute email</label>
-            <input id="signup-email" type="email" autoComplete="username" placeholder="name@iiitsurat.ac.in" value={email} onChange={(e) => setEmail(e.target.value)} required />
+            <input id="signup-email" type="email" autoComplete="username" placeholder={`name${DOMAIN}`} value={email} onChange={(e) => setEmail(e.target.value)} required />
             <label htmlFor="signup-password" style={{ marginTop: '1rem' }}>Password</label>
             <input id="signup-password" type="password" autoComplete="new-password" placeholder="At least 8 characters" value={password} onChange={(e) => setPassword(e.target.value)} required />
             <label htmlFor="signup-confirm" style={{ marginTop: '1rem' }}>Confirm password</label>
@@ -316,7 +317,7 @@ function Login() {
               id="login-email"
               type="email"
               autoComplete="username"
-              placeholder="name@iiitsurat.ac.in"
+              placeholder={`name${DOMAIN}`}
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required

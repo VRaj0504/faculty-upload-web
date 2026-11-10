@@ -3,9 +3,7 @@ import { collection, doc, getDoc, getDocs, query, setDoc, where } from 'firebase
 import { db } from './firebaseConfig';
 
 type Person = { name: string; email: string };
-type Cfg = { dsw?: Person; dean?: Person; fic?: Record<string, Person | Person[]> };
-
-const ficList = (v: Person | Person[] | undefined): Person[] => (Array.isArray(v) ? v : v ? [v] : []);
+type Cfg = { dsw?: Person; dean?: Person; fic?: Record<string, Person> };
 type Club = { id: string; name: string; parentClubId?: string | null };
 type Faculty = { name: string; email: string; signedIn: boolean };
 
@@ -86,11 +84,7 @@ export default function EventExcusalSetup() {
       const clean: Cfg = {
         ...(cfg.dsw ? { dsw: cfg.dsw } : {}),
         ...(cfg.dean ? { dean: cfg.dean } : {}),
-        fic: Object.fromEntries(
-          Object.entries(cfg.fic ?? {})
-            .map(([id, v]) => [id, ficList(v).filter((p) => p?.email)] as const)
-            .filter(([, l]) => l.length > 0),
-        ),
+        fic: Object.fromEntries(Object.entries(cfg.fic ?? {}).filter(([, p]) => p?.email)),
       };
       await setDoc(doc(db, 'config', 'eventExcusal'), clean);
       setStatus('Saved. New requests use these signers.');
@@ -101,8 +95,7 @@ export default function EventExcusalSetup() {
     }
   };
 
-  const missing = parents.filter((p) => !ficList(cfg.fic?.[p.id]).some((f) => f?.email)).length;
-  const setFics = (clubId: string, list: Person[]) => setCfg((c) => ({ ...c, fic: { ...(c.fic ?? {}), [clubId]: list } }));
+  const missing = parents.filter((p) => !cfg.fic?.[p.id]?.email).length;
 
   return (
     <div className="card" style={{ maxWidth: 820, padding: '1.5rem' }}>
@@ -135,10 +128,7 @@ export default function EventExcusalSetup() {
       </table>
 
       <h2 style={{ fontSize: '1.05rem', marginTop: '1.5rem' }}>Faculty in-charge (FIC) of each club{missing ? ` · ${missing} not set` : ''}</h2>
-      <p className="res-hint">
-        Sub-clubs use their parent club's FIC, e.g. Football → Indominous, Exposure → Imagine. If a club has more than one FIC, add them all:
-        each gets the request and any one of them can sign.
-      </p>
+      <p className="res-hint">Sub-clubs use their parent club's FIC, e.g. Football → Indominous, Exposure → Imagine.</p>
       <table>
         <thead>
           <tr>
@@ -156,37 +146,10 @@ export default function EventExcusalSetup() {
                   {subs.length > 0 && <div style={{ fontSize: '0.78rem', color: 'var(--ink-soft)' }}>{subs.join(', ')}</div>}
                 </td>
                 <td>
-                  {(() => {
-                    const list = ficList(cfg.fic?.[p.id]);
-                    const rows = list.length ? list : [undefined];
-                    return (
-                      <div style={{ display: 'grid', gap: '0.4rem' }}>
-                        {rows.map((f, i) => (
-                          <div key={i} style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
-                            <FacultySelect
-                              value={f}
-                              onChange={(v) => {
-                                const next = [...list];
-                                if (v) next[i] = v;
-                                else next.splice(i, 1);
-                                setFics(p.id, next);
-                              }}
-                            />
-                            {list.length > 1 && (
-                              <button type="button" className="button-secondary" onClick={() => setFics(p.id, list.filter((_, j) => j !== i))} title="Remove">
-                                ✕
-                              </button>
-                            )}
-                          </div>
-                        ))}
-                        {list.length > 0 && list.length < 5 && (
-                          <button type="button" className="button-secondary" style={{ justifySelf: 'start' }} onClick={() => setFics(p.id, [...list, { name: '', email: '' }])}>
-                            + Add another FIC
-                          </button>
-                        )}
-                      </div>
-                    );
-                  })()}
+                  <FacultySelect
+                    value={cfg.fic?.[p.id]}
+                    onChange={(v) => setCfg((c) => ({ ...c, fic: { ...(c.fic ?? {}), [p.id]: v as Person } }))}
+                  />
                 </td>
               </tr>
             );
