@@ -35,6 +35,8 @@ const PlacementStats = lazyRetry(() => import('./PlacementStats'));
 const ClassChanges = lazyRetry(() => import('./ClassChanges'));
 const EventExcusalSetup = lazyRetry(() => import('./EventExcusalSetup'));
 const MessAlwaysAvailable = lazyRetry(() => import('./MessAlwaysAvailable'));
+const MessMenuEditor = lazyRetry(() => import('./MessMenuEditor'));
+const AppHealth = lazyRetry(() => import('./AppHealth'));
 const AttendanceUpload = lazyRetry(() => import('./AttendanceUpload'));
 const AssignGrades = lazyRetry(() => import('./AssignGrades'));
 const UploadMarks = lazyRetry(() => import('./UploadMarks'));
@@ -467,6 +469,19 @@ function App() {
               </div>
             )}
 
+            {activeTab === 'appHealth' && (
+              <div className="panel-enter" key="appHealth">
+                {role === 'admin' ? (
+                  <AppHealth />
+                ) : (
+                  <div className="card" style={{ maxWidth: 640, padding: '2rem', margin: '2rem auto' }}>
+                    <h1 style={{ fontSize: '1.3rem' }}>App health</h1>
+                    <p style={{ color: 'var(--ink-soft)' }}>Only admins can see usage and crash reports.</p>
+                  </div>
+                )}
+              </div>
+            )}
+
             {activeTab === 'excusalSetup' && (
               <div className="panel-enter" key="excusalSetup">
                 {role === 'admin' ? (
@@ -495,6 +510,7 @@ function App() {
 
             {activeTab === 'messSubscribers' && (
               <div className="panel-enter" key="messSubscribers">
+                <MessMenuEditor canEdit={role === 'admin'} />
                 <MessAlwaysAvailable />
                 <MessSubscribersUpload />
               </div>

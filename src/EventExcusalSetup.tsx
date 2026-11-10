@@ -128,7 +128,7 @@ export default function EventExcusalSetup() {
       </table>
 
       <h2 style={{ fontSize: '1.05rem', marginTop: '1.5rem' }}>Faculty in-charge (FIC) of each club{missing ? ` · ${missing} not set` : ''}</h2>
-      <p className="res-hint">Sub-clubs use their parent club's FIC, e.g. Football → Indominous, Exposure → Imagine.</p>
+      <p className="res-hint">Sub-clubs use their parent club's FIC, e.g. Football → Indominus, Exposure → Imagine.</p>
       <table>
         <thead>
           <tr>
