@@ -32,7 +32,8 @@ export type Tab =
   | 'inboxImports'
   | 'directorOverview'
   | 'meetings'
-  | 'appHealth';
+  | 'appHealth'
+  | 'reportedPosts';
 
 export type Tone = 'blue' | 'mint' | 'lilac' | 'yellow' | 'peach' | 'pink';
 
@@ -206,6 +207,7 @@ export const NAV: NavGroup[] = [
       { tab: 'excusalSetup', label: 'Event excusal', hint: 'FIC and deans who sign', icon: 'check' },
       { tab: 'inboxImports', label: 'Inbox imports', hint: 'From email', icon: 'inbox' },
       { tab: 'appHealth', label: 'App health', hint: 'Usage and crash reports', icon: 'chart' },
+      { tab: 'reportedPosts', label: 'Reported posts', hint: 'Report and block from the app', icon: 'inbox' },
     ],
     prefetch: () => {
       import('./CurriculumUpload');
