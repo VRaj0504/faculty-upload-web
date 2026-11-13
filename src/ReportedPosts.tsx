@@ -17,7 +17,7 @@ const REASONS: Record<string, string> = {
 
 type Report = {
   id: string;
-  kind: 'notice' | 'event';
+  kind: 'notice' | 'event' | 'question';
   contentId: string;
   title: string;
   authorName: string;
@@ -30,7 +30,7 @@ type Report = {
 type Group = { key: string; kind: Report['kind']; contentId: string; title: string; authorName: string; clubName: string; reports: Report[]; first: Date | null };
 
 const fmt = (d: Date | null) => (d ? d.toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }) : '');
-const collectionFor = (kind: Report['kind']) => (kind === 'event' ? 'clubEvents' : 'notices');
+const collectionFor = (kind: Report['kind']) => (kind === 'event' ? 'clubEvents' : kind === 'question' ? 'prepQuestions' : 'notices');
 
 export default function ReportedPosts() {
   const [reports, setReports] = useState<Report[] | null>(null);
@@ -49,7 +49,7 @@ export default function ReportedPosts() {
               const x = d.data();
               return {
                 id: d.id,
-                kind: x.kind === 'event' ? 'event' : 'notice',
+                kind: x.kind === 'event' ? 'event' : x.kind === 'question' ? 'question' : 'notice',
                 contentId: String(x.contentId ?? ''),
                 title: String(x.title ?? ''),
                 authorName: String(x.authorName ?? ''),
@@ -129,7 +129,7 @@ export default function ReportedPosts() {
       return;
     }
     const snap = await getDoc(doc(db, collectionFor(g.kind), g.contentId)).catch(() => null);
-    setPreview((p) => ({ ...p, [g.key]: snap?.exists() ? String(snap.get('description') ?? '(no text)') : 'This post has already been deleted.' }));
+    setPreview((p) => ({ ...p, [g.key]: snap?.exists() ? String(snap.get('description') ?? snap.get('title') ?? '(no text)') : 'This post has already been deleted.' }));
   };
 
   return (
@@ -166,7 +166,7 @@ export default function ReportedPosts() {
                   <div style={{ flex: '1 1 18rem', minWidth: 0 }}>
                     <div style={{ fontWeight: 700, color: 'var(--ink)', wordBreak: 'break-word' }}>{g.title || '(untitled)'}</div>
                     <div style={{ fontSize: '0.82rem', color: 'var(--ink-soft)', marginTop: 2 }}>
-                      {[g.kind === 'event' ? 'Club event' : 'Notice', g.authorName && `by ${g.authorName}`, g.clubName].filter(Boolean).join(' · ')}
+                      {[g.kind === 'event' ? 'Club event' : g.kind === 'question' ? 'Prep question' : 'Notice', g.authorName && `by ${g.authorName}`, g.clubName].filter(Boolean).join(' · ')}
                     </div>
                     <div style={{ fontSize: '0.82rem', marginTop: 4 }}>
                       <b>{g.reports.length} report{g.reports.length > 1 ? 's' : ''}</b> · {reasons} · first {fmt(g.first)}

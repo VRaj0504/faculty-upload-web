@@ -146,6 +146,7 @@ export function watchEvents(id: string, cb: (e: Ev[]) => void) {
 
 export async function openFile(path: string) {
   const w = window.open('', '_blank');
+  if (w) w.opener = null;
   try {
     const url = await getDownloadURL(ref(storage, path));
     if (w) w.location.href = url;

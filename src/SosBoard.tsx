@@ -171,6 +171,8 @@ export default function SosBoard({
                     <iframe
                       className="sos-map"
                       title={`Location of ${a.studentName}`}
+                      loading="lazy"
+                      sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox"
                       src={`https://www.openstreetmap.org/export/embed.html?bbox=${loc.lng - pad}%2C${loc.lat - pad}%2C${loc.lng + pad}%2C${loc.lat + pad}&layer=mapnik&marker=${loc.lat}%2C${loc.lng}`}
                     />
                     <p className="sos-loc">
