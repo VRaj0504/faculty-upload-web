@@ -304,6 +304,8 @@ function Upload() {
     const queue = [...files];
     const total = queue.length;
     let doneCount = 0;
+    let straightenedPages = 0;
+    let straightenedFiles = 0;
     const onBeforeUnload = (e: BeforeUnloadEvent) => {
       e.preventDefault();
       e.returnValue = '';
@@ -325,9 +327,19 @@ function Upload() {
       const stripExtension = (filename: string) => filename.replace(/\.[^.]+$/, '');
 
       for (let i = 0; i < queue.length; i++) {
-        const currentFile = queue[i];
         setUploadFileIndex(i + 1);
         setUploadProgress(0);
+        // Slides saved with "Print to PDF" often have every page on its side. Turn those upright first.
+        let currentFile = queue[i];
+        if (/\.pdf$/i.test(currentFile.name)) {
+          const { straightenPdfFile } = await import('./pdfStraighten');
+          const res = await straightenPdfFile(currentFile);
+          if (res.fixed && res.file.size <= MAX_FILE_MB * 1024 * 1024) {
+            currentFile = res.file;
+            straightenedPages += res.fixed;
+            straightenedFiles++;
+          }
+        }
 
         const fileTitle = total > 1 ? stripExtension(currentFile.name) : title;
         const storagePath = `resources/${allBranches ? 'ALL' : branch}/${semester}/${pathSafe(effectiveSubject)}/${Date.now()}-${pathSafe(currentFile.name)}`;
@@ -383,7 +395,10 @@ function Upload() {
 
       setMessage(
         (total > 1 ? `${total} files filed successfully` : 'Filed successfully') +
-          (allBranches ? ` for ${commonBranches.join(', ')}.` : '.'),
+          (allBranches ? ` for ${commonBranches.join(', ')}.` : '.') +
+          (straightenedPages
+            ? ` ${straightenedPages} sideways page${straightenedPages === 1 ? ' was' : 's were'} turned upright${straightenedFiles > 1 ? ` in ${straightenedFiles} files` : ''}.`
+            : ''),
       );
       setFiles([]);
       setTitle('');
