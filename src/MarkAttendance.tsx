@@ -1,9 +1,12 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import AttendanceClassPicker, { type PickerState } from './AttendanceClassPicker';
 import {
   dateWarnings,
   isValidIso,
-  matchReg,
+  matchInSeries,
+  rollSeries,
+  tailOf,
+  type RollSeries,
   pickBatch,
   prettyDate,
   semesterWindow,
@@ -24,7 +27,7 @@ function MarkAttendance() {
   const [held, setHeld] = useState<Held[] | null>(null);
   const [marks, setMarks] = useState<Map<string, Mark>>(new Map());
   const [dirty, setDirty] = useState(false);
-  const [rollInput, setRollInput] = useState('');
+  const [seriesInput, setSeriesInput] = useState<Record<string, string>>({});
   const [rollFeedback, setRollFeedback] = useState('');
   const [busy, setBusy] = useState<'' | 'saving' | 'deleting' | 'downloading'>('');
   const [status, setStatus] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
@@ -67,6 +70,9 @@ function MarkAttendance() {
     if (batchMode === 'all' || batchMode === 'saved') return classStudents;
     return pickBatch(classStudents, batchMode);
   }, [classStudents, batchMode, savedOnly]);
+  const series = useMemo(() => rollSeries(students), [students]);
+  const seriesRef = useRef<RollSeries[]>(series);
+  seriesRef.current = series;
   const partOfClass = students.length < classStudents.length;
   const batchName =
     batchMode === 'h1' ? 'Batch 1 (first half)' : batchMode === 'h2' ? 'Batch 2 (second half)' : batchMode.startsWith('r:') ? `Roll ${batchMode.slice(2)}` : batchMode === 'saved' ? 'Saved batch' : 'Whole class';
@@ -110,13 +116,7 @@ function MarkAttendance() {
     }
     setMarks(m);
     setDirty(false);
-    setRollInput(
-      Array.from(m)
-        .filter(([, v]) => v === 'A')
-        .map(([r]) => r)
-        .sort()
-        .join(', '),
-    );
+    setSeriesInput(textFor(m));
     setRollFeedback('');
   }, [existing]);
 
@@ -130,18 +130,24 @@ function MarkAttendance() {
     return () => window.removeEventListener('beforeunload', h);
   }, [dirty]);
 
-  const absentText = (m: Map<string, Mark>) =>
+  function textFor(m: Map<string, Mark>): Record<string, string> {
+    const out: Record<string, string[]> = {};
     Array.from(m)
       .filter(([, v]) => v === 'A')
       .map(([r]) => r)
       .sort()
-      .join(', ');
+      .forEach((r) => {
+        const { prefix, tail } = tailOf(r, seriesRef.current);
+        (out[prefix] = out[prefix] ?? []).push(tail);
+      });
+    return Object.fromEntries(Object.entries(out).map(([k, v]) => [k, v.join(', ')]));
+  }
   const setMark = (r: string, v: Mark) => {
     const next = new Map(marks);
     if (v === 'P') next.delete(r);
     else next.set(r, v);
     setMarks(next);
-    setRollInput(absentText(next));
+    setSeriesInput(textFor(next));
     setDirty(true);
     setRollFeedback('');
   };
@@ -149,7 +155,7 @@ function MarkAttendance() {
     const next = new Map<string, Mark>();
     if (v !== 'P') students.forEach((s) => next.set(s.regNo, v));
     setMarks(next);
-    setRollInput(absentText(next));
+    setSeriesInput(textFor(next));
     setDirty(true);
   };
 
@@ -166,15 +172,19 @@ function MarkAttendance() {
 
   const applyRolls = () => {
     if (!ctx) return;
-    const tokens = rollInput.split(/[\s,;]+/).map((t) => t.trim()).filter(Boolean);
     const next = new Map<string, Mark>(Array.from(marks).filter(([, v]) => v === 'OD'));
     const problems: string[] = [];
-    for (const t of tokens) {
-      const m = matchReg(t, students, ctx.roster);
+    const jobs: { t: string; s: RollSeries }[] = [];
+    for (const sr of series.length ? series : []) {
+      (seriesInput[sr.prefix] ?? '').split(/[\s,;]+/).map((t) => t.trim()).filter(Boolean).forEach((t) => jobs.push({ t, s: sr }));
+    }
+    (seriesInput[''] ?? '').split(/[\s,;]+/).map((t) => t.trim()).filter(Boolean).forEach((t) => series[0] && jobs.push({ t, s: series[0] }));
+    for (const { t, s: sr } of jobs) {
+      const m = matchInSeries(t, sr, students, ctx.roster);
       if (m.kind === 'ok') next.set(m.student.regNo, 'A');
       else if (m.kind === 'ambiguous') problems.push(`${t} (matches more than one student)`);
       else if (m.kind === 'elsewhere') problems.push(`${t} (${m.student.name} is in ${m.student.section ?? m.student.branch}, not this class)`);
-      else problems.push(`${t} (not found)`);
+      else problems.push(`${series.length > 1 ? sr.prefix : ''}${t} (not found)`);
     }
     setMarks(next);
     setDirty(true);
@@ -425,15 +435,55 @@ function MarkAttendance() {
             <>
               <div className="att-rolls">
                 <label>Type absentees (fastest)</label>
-                <div className="att-row" style={{ marginTop: 0 }}>
-                  <textarea
-                    value={rollInput}
-                    onChange={(e) => setRollInput(e.target.value)}
-                    placeholder="e.g. 114, 117, 132 — full numbers or last digits"
-                    rows={2}
-                    style={{ flex: 1 }}
-                  />
-                  <button type="button" onClick={applyRolls}>Apply</button>
+                <div className={`att-series${series.length > 1 ? ' att-series-multi' : ''}`}>
+                  <div className="att-series-boxes">
+                    {series.map((sr) => (
+                      <div key={sr.prefix} id={`series-${sr.prefix}`} className="att-series-box">
+                        <div className="att-series-head">
+                          <span className="att-series-prefix">{sr.prefix}<span className="att-series-blank">{'_'.repeat(Math.min(sr.width, 4))}</span></span>
+                          <span className="res-hint" style={{ margin: 0 }}>
+                            {sr.first}–{sr.last} · {sr.count} students
+                          </span>
+                        </div>
+                        <textarea
+                          value={seriesInput[sr.prefix] ?? ''}
+                          onChange={(e) => setSeriesInput((v) => ({ ...v, [sr.prefix]: e.target.value }))}
+                          placeholder={series.length > 1 ? `Last digits only, e.g. ${Number(sr.first) + 2}, ${Number(sr.first) + 9}` : 'e.g. 114, 117, 132 — last digits or full roll numbers'}
+                          rows={2}
+                          aria-label={`Absent roll numbers in ${sr.prefix}`}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) applyRolls();
+                          }}
+                        />
+                      </div>
+                    ))}
+                    <div className="att-row" style={{ marginTop: 0 }}>
+                      <button type="button" onClick={applyRolls}>Apply</button>
+                      <span className="res-hint" style={{ margin: 0, alignSelf: 'center' }}>Separate numbers with commas or spaces.</span>
+                    </div>
+                  </div>
+                  {series.length > 1 && (
+                    <aside className="att-series-side" aria-label="Roll number series in this class">
+                      <p className="att-series-side-title">This class has {series.length} roll series</p>
+                      {series.map((sr) => (
+                        <button
+                          key={sr.prefix}
+                          type="button"
+                          className="att-series-chip"
+                          onClick={() => {
+                            const box = document.querySelector<HTMLTextAreaElement>(`#series-${CSS.escape(sr.prefix)} textarea`);
+                            box?.focus();
+                            box?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+                          }}
+                        >
+                          <strong>{sr.prefix}</strong>
+                          <span>
+                            {sr.count} students · {sr.first}–{sr.last}
+                          </span>
+                        </button>
+                      ))}
+                    </aside>
+                  )}
                 </div>
                 {rollFeedback && <p className="res-hint">{rollFeedback}</p>}
               </div>

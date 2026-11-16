@@ -839,3 +839,39 @@ export function gridFromPdfPages(pages: PdfTextItem[][]): unknown[][] | { error:
   if (grid.length < 2) return { error: 'Found the dates but no student rows (Reg. No. like UG26CSE101) in this PDF.' };
   return grid;
 }
+
+export type RollSeries = { prefix: string; count: number; first: string; last: string; width: number; students: RosterEntry[] };
+
+export function rollSeries(students: RosterEntry[]): RollSeries[] {
+  const map = new Map<string, RosterEntry[]>();
+  for (const s of students) {
+    const m = /^(.*?)(\d+)$/.exec(s.regNo.toUpperCase());
+    const prefix = m ? m[1] : s.regNo.toUpperCase();
+    map.set(prefix, [...(map.get(prefix) ?? []), s]);
+  }
+  return Array.from(map.entries())
+    .map(([prefix, list]) => {
+      const tails = list.map((s) => s.regNo.toUpperCase().slice(prefix.length)).sort((a, b) => Number(a) - Number(b) || a.localeCompare(b));
+      return { prefix, count: list.length, first: tails[0] ?? '', last: tails[tails.length - 1] ?? '', width: Math.max(...tails.map((t) => t.length), 1), students: list };
+    })
+    .sort((a, b) => b.count - a.count || a.prefix.localeCompare(b.prefix));
+}
+
+export function matchInSeries(raw: unknown, series: RollSeries, classStudents: RosterEntry[], wholeRoster: RosterEntry[]): RegMatch {
+  const token = cleanReg(raw);
+  if (/^\d+$/.test(token)) {
+    const hit = series.students.filter((s) => Number(s.regNo.toUpperCase().slice(series.prefix.length)) === Number(token));
+    if (hit.length === 1) return { kind: 'ok', student: hit[0] };
+    if (hit.length > 1) return { kind: 'ambiguous', token };
+    const other = wholeRoster.find((s) => s.regNo.toUpperCase() === series.prefix + token.padStart(series.width, '0'));
+    if (other) return { kind: 'elsewhere', token, student: other };
+    return { kind: 'unknown', token };
+  }
+  return matchReg(token, classStudents, wholeRoster);
+}
+
+export function tailOf(regNo: string, series: RollSeries[]): { prefix: string; tail: string } {
+  const up = regNo.toUpperCase();
+  const s = series.find((x) => up.startsWith(x.prefix) && /^\d+$/.test(up.slice(x.prefix.length)));
+  return s ? { prefix: s.prefix, tail: String(Number(up.slice(s.prefix.length))) } : { prefix: '', tail: up };
+}
